@@ -24,6 +24,7 @@
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == '' and '$(OS)' == 'Windows_NT'">x86_64-pc-windows-msvc</WindowsRustTargetTriple>
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == ''">x86_64-pc-windows-gnu</WindowsRustTargetTriple>
     <RustCoreDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '..', 'typst_core'))))</RustCoreDir>
+    <RustCoreManifestPath>$([System.IO.Path]::Combine('$(RustCoreDir)', 'Cargo.toml'))</RustCoreManifestPath>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
@@ -66,33 +67,21 @@
   </ItemGroup>
 
   <Target Name="BuildRust" BeforeTargets="PrepareForBuild">
-    <Message Text="Building rust_core for %(RustTargetsToBuild.Identity) (%(RustTargetsToBuild.TargetTriple))"
-             Importance="high"
-             Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
-    <Exec Command="rustup target add %(RustTargetsToBuild.TargetTriple)"
-          Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
-    <Exec Command="cargo build --release --manifest-path ..\typst_core\Cargo.toml --target %(RustTargetsToBuild.TargetTriple)"
-          WorkingDirectory="$(MSBuildThisFileDirectory)"
-          Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Message Text="Building rust_core for %(RustTargetsToBuild.Identity) (%(RustTargetsToBuild.TargetTriple))" Importance="high" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="rustup target add %(RustTargetsToBuild.TargetTriple)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="cargo build --release --manifest-path &quot;$(RustCoreManifestPath)&quot; --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
   </Target>
 
-  <Target Name="CollectRustNativeLibraries"
-          DependsOnTargets="BuildRust"
-          BeforeTargets="PrepareForBuild">
+  <Target Name="CollectRustNativeLibraries" DependsOnTargets="BuildRust" BeforeTargets="PrepareForBuild">
     <ItemGroup>
-      <RustNativeToPack Include="@(RustRuntime)"
-        Condition="Exists('%(RustRuntime.CargoOutput)')" />
+      <RustNativeToPack Include="@(RustRuntime)" Condition="Exists('%(RustRuntime.CargoOutput)')" />
     </ItemGroup>
 
-    <CreateItem Include="@(RustNativeToPack-&gt;'%(CargoOutput)')"
-                AdditionalMetadata="Runtime=%(Identity);PackagePath=%(PackagePath);DestinationPath=$([System.IO.Path]::Combine('$(IntermediateOutputPath)','%(PackagePathOnDisk)'))">
+    <CreateItem Include="@(RustNativeToPack-&gt;'%(CargoOutput)')" AdditionalMetadata="Runtime=%(Identity);PackagePath=%(PackagePath);DestinationPath=$([System.IO.Path]::Combine('$(IntermediateOutputPath)','%(PackagePathOnDisk)'))">
       <Output TaskParameter="Include" ItemName="RustNativeFiles" />
     </CreateItem>
 
-    <Copy SourceFiles="@(RustNativeFiles)"
-          DestinationFiles="@(RustNativeFiles-&gt;'%(DestinationPath)')"
-          SkipUnchangedFiles="true"
-          Condition="@(RustNativeFiles) != ''" />
+    <Copy SourceFiles="@(RustNativeFiles)" DestinationFiles="@(RustNativeFiles-&gt;'%(DestinationPath)')" SkipUnchangedFiles="true" Condition="@(RustNativeFiles) != ''" />
 
     <ItemGroup Condition="@(RustNativeFiles) != ''">
       <None Include="@(RustNativeFiles-&gt;'%(DestinationPath)')">
@@ -108,10 +97,7 @@
       <HostNative Include="@(RustNativeFiles)" Condition="'%(Runtime)' == '$(HostRustRuntime)'" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(HostNative-&gt;'%(DestinationPath)')"
-          DestinationFiles="@(HostNative-&gt;'$(OutDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true"
-          Condition="@(HostNative) != ''" />
+    <Copy SourceFiles="@(HostNative-&gt;'%(DestinationPath)')" DestinationFiles="@(HostNative-&gt;'$(OutDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Condition="@(HostNative) != ''" />
   </Target>
 
 </Project>
