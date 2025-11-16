@@ -47,7 +47,7 @@ runs:
 
     - name: Restore .NET solution
       shell: bash
-      run: dotnet restore typstsharp.sln
+      run: dotnet restore typstsharp.slnx
 
     - name: Pack typstsharp
       shell: bash
