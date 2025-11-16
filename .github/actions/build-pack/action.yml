@@ -39,7 +39,6 @@ runs:
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: ${{ inputs.rust-version }}
-        profile: minimal
 
     - name: Add Rust cross-compilation targets
       shell: bash
