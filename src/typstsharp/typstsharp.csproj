@@ -4,15 +4,17 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
     <PackageId>typstsharp</PackageId>
-    <Version>0.1.1-typst0.14.0</Version>
+    <Version>0.0.1-typst0.14.0</Version>
     <Authors>evolvedlight</Authors>
-    <Description>A .NET wrapper for the Typst typesetting system. Forked from Typst.Net to reduce scope and reduce memory</Description>
+    <Description>A .NET wrapper for the Typst typesetting system. (this is an experimental fork to include the binaries in the package for multiple architectures)</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>typst</PackageTags>
+    <PackageTags>typst;typesetting;pdf;rust</PackageTags>
     <RepositoryUrl>https://github.com/evolvedlight/typstsharp</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+
   </PropertyGroup>
 
   <PropertyGroup>
@@ -23,16 +25,11 @@
     <RustTargets Condition="'$(HostRustRuntime)' != '' and !$([System.String]::Copy(';$(RustTargets);').Contains(';$(HostRustRuntime);'))">$(RustTargets);$(HostRustRuntime)</RustTargets>
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == '' and '$(OS)' == 'Windows_NT'">x86_64-pc-windows-msvc</WindowsRustTargetTriple>
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == ''">x86_64-pc-windows-gnu</WindowsRustTargetTriple>
-    <RustCoreDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '..', 'typst_core'))))</RustCoreDir>
-    <RustCoreManifestPath>$([System.IO.Path]::Combine('$(RustCoreDir)', 'Cargo.toml'))</RustCoreManifestPath>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-    <RustTargets>$(HostRustRuntime)</RustTargets>
+    <RustCoreDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '..', 'rust_core'))))</RustCoreDir>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath=""/>
   </ItemGroup>
 
   <ItemGroup>
@@ -40,16 +37,8 @@
       <TargetTriple>$(WindowsRustTargetTriple)</TargetTriple>
       <LibraryFileName>rust_core.dll</LibraryFileName>
     </RustRuntime>
-    <RustRuntime Include="win-arm64">
-      <TargetTriple>aarch64-pc-windows-msvc</TargetTriple>
-      <LibraryFileName>rust_core.dll</LibraryFileName>
-    </RustRuntime>
     <RustRuntime Include="linux-x64">
       <TargetTriple>x86_64-unknown-linux-gnu</TargetTriple>
-      <LibraryFileName>librust_core.so</LibraryFileName>
-    </RustRuntime>
-    <RustRuntime Include="linux-arm64">
-      <TargetTriple>aarch64-unknown-linux-gnu</TargetTriple>
       <LibraryFileName>librust_core.so</LibraryFileName>
     </RustRuntime>
   </ItemGroup>
@@ -67,9 +56,9 @@
   </ItemGroup>
 
   <Target Name="BuildRust" BeforeTargets="PrepareForBuild">
-    <Message Text="Building rust_core for %(RustTargetsToBuild.Identity) (%(RustTargetsToBuild.TargetTriple))" Importance="high" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Message Text="Building typst_core for %(RustTargetsToBuild.Identity) (%(RustTargetsToBuild.TargetTriple))" Importance="high" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
     <Exec Command="rustup target add %(RustTargetsToBuild.TargetTriple)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
-    <Exec Command="cargo build --release --manifest-path &quot;$(RustCoreManifestPath)&quot; --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="cargo build --release --manifest-path ../typst_core/Cargo.toml --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
   </Target>
 
   <Target Name="CollectRustNativeLibraries" DependsOnTargets="BuildRust" BeforeTargets="PrepareForBuild">
@@ -77,14 +66,14 @@
       <RustNativeToPack Include="@(RustRuntime)" Condition="Exists('%(RustRuntime.CargoOutput)')" />
     </ItemGroup>
 
-    <CreateItem Include="@(RustNativeToPack-&gt;'%(CargoOutput)')" AdditionalMetadata="Runtime=%(Identity);PackagePath=%(PackagePath);DestinationPath=$([System.IO.Path]::Combine('$(IntermediateOutputPath)','%(PackagePathOnDisk)'))">
+    <CreateItem Include="@(RustNativeToPack->'%(CargoOutput)')" AdditionalMetadata="Runtime=%(Identity);PackagePath=%(PackagePath);DestinationPath=$([System.IO.Path]::Combine('$(IntermediateOutputPath)','%(PackagePathOnDisk)'))">
       <Output TaskParameter="Include" ItemName="RustNativeFiles" />
     </CreateItem>
 
-    <Copy SourceFiles="@(RustNativeFiles)" DestinationFiles="@(RustNativeFiles-&gt;'%(DestinationPath)')" SkipUnchangedFiles="true" Condition="@(RustNativeFiles) != ''" />
+    <Copy SourceFiles="@(RustNativeFiles)" DestinationFiles="@(RustNativeFiles->'%(DestinationPath)')" SkipUnchangedFiles="true" Condition="@(RustNativeFiles) != ''" />
 
     <ItemGroup Condition="@(RustNativeFiles) != ''">
-      <None Include="@(RustNativeFiles-&gt;'%(DestinationPath)')">
+      <None Include="@(RustNativeFiles->'%(DestinationPath)')">
         <Pack>true</Pack>
         <PackagePath>%(RustNativeFiles.PackagePath)</PackagePath>
         <Visible>false</Visible>
@@ -97,7 +86,7 @@
       <HostNative Include="@(RustNativeFiles)" Condition="'%(Runtime)' == '$(HostRustRuntime)'" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(HostNative-&gt;'%(DestinationPath)')" DestinationFiles="@(HostNative-&gt;'$(OutDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Condition="@(HostNative) != ''" />
+    <Copy SourceFiles="@(HostNative->'%(DestinationPath)')" DestinationFiles="@(HostNative->'$(OutDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Condition="@(HostNative) != ''" />
   </Target>
 
 </Project>

@@ -33,8 +33,7 @@ runs:
           zlib1g-dev \
           mingw-w64 \
           ca-certificates
-        sudo rm -rf /var/lib/apt/lists/*
-
+          
     - name: Install Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
