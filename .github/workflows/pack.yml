@@ -48,5 +48,5 @@ jobs:
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v5
         with:
-          name: typst-net-nuget
+          name: typstsharp-${{ env.PACKAGE_VERSION }}
           path: artifacts
