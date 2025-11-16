@@ -1,0 +1,33 @@
+[package]
+name = "rust_core"
+version = "0.0.1"
+edition = "2024"
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chrono = { version = "0.4.41", default-features = false, features = [
+    "clock",
+    "std",
+] }
+codespan-reporting = "0.12"
+comemo = "0.5.0"
+ecow = "0.2"
+pathdiff = "0.2"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+typst = "0.14.0"
+typst-kit = { version = "0.14.0", features = [
+    "downloads",
+    "embed-fonts",
+    "vendor-openssl",
+] }
+typst-pdf = "0.14.0"
+typst-svg = "0.14.0"
+typst-render = "0.14.0"
+typst-eval = "0.14.0"
+typst-html = "0.14.0"
+
+[build-dependencies]
+csbindgen = "1.9.7"

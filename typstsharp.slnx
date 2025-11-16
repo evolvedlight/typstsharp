@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/typstsharp/typstsharp.csproj" />
+  <Project Path="src/typstsharp.cli/typstsharp.cli.csproj" Id="230da245-e37c-417d-8116-570cf0661f6c" />
+</Solution>

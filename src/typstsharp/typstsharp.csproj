@@ -1,0 +1,78 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <RustProjectDir>$(MSBuildThisFileDirectory)..\typst_core\</RustProjectDir>
+    <RustTargetDir>$(RustProjectDir)target\</RustTargetDir>
+    <RustProfile Condition="'$(Configuration)' == 'Release'">release</RustProfile>
+    <RustProfile Condition="'$(Configuration)' != 'Release'">debug</RustProfile>
+    <RustCargoProfileFlag Condition="'$(Configuration)' == 'Release'">--release</RustCargoProfileFlag>
+    <RustCargoProfileFlag Condition="'$(Configuration)' != 'Release'"></RustCargoProfileFlag>
+    <RustStampFile>$(IntermediateOutputPath)rust-core.stamp</RustStampFile>
+    <RustNativeStagingDir>$(IntermediateOutputPath)rust\native\</RustNativeStagingDir>
+    <RustRuntimeIdentifier Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</RustRuntimeIdentifier>
+    <RustRuntimeIdentifier Condition="'$(RustRuntimeIdentifier)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</RustRuntimeIdentifier>
+    <RustRuntimeIdentifier Condition="'$(RustRuntimeIdentifier)' == ''">any</RustRuntimeIdentifier>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeRustNativeInBuildOutputs</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <RustCoreSource Include="$(RustProjectDir)src\**\*.rs" />
+    <RustCoreSource Include="$(RustProjectDir)Cargo.toml" />
+    <RustCoreSource Include="$(RustProjectDir)build.rs" />
+  </ItemGroup>
+
+  <Target Name="BuildRustCore"
+          Inputs="@(RustCoreSource)"
+          Outputs="$(RustStampFile)"
+          BeforeTargets="PrepareForBuild">
+    <Message Text="Building rust_core via cargo $(RustCargoProfileFlag)" Importance="High" />
+    <Exec Command="cargo build --manifest-path &quot;$(RustProjectDir)Cargo.toml&quot; $(RustCargoProfileFlag)" />
+    <Touch Files="$(RustStampFile)" AlwaysCreate="true" />
+  </Target>
+
+  <Target Name="StageRustNativeLibrary"
+          DependsOnTargets="BuildRustCore"
+          BeforeTargets="ResolveReferences">
+    <ItemGroup>
+      <RustNativeCandidate Include="$(RustTargetDir)$(RustProfile)\rust_core.dll" Condition="Exists('$(RustTargetDir)$(RustProfile)\rust_core.dll')" />
+      <RustNativeCandidate Include="$(RustTargetDir)$(RustProfile)\librust_core.so" Condition="Exists('$(RustTargetDir)$(RustProfile)\librust_core.so')" />
+      <RustNativeCandidate Include="$(RustTargetDir)$(RustProfile)\librust_core.dylib" Condition="Exists('$(RustTargetDir)$(RustProfile)\librust_core.dylib')" />
+    </ItemGroup>
+
+  <Error Condition="'@(RustNativeCandidate)' == ''" Text="rust_core native library was not found. Did cargo finish successfully?" />
+
+    <MakeDir Directories="$(RustNativeStagingDir)" />
+    <Copy SourceFiles="@(RustNativeCandidate)"
+          DestinationFiles="@(RustNativeCandidate-&gt;'$(RustNativeStagingDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+
+    <ItemGroup>
+      <RustNativeStaged Include="@(RustNativeCandidate-&gt;'$(RustNativeStagingDir)%(Filename)%(Extension)')">
+        <NativeFileName>%(Filename)%(Extension)</NativeFileName>
+      </RustNativeStaged>
+
+      <ContentWithTargetPath Include="@(RustNativeStaged)">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <TargetPath>%(RustNativeStaged.NativeFileName)</TargetPath>
+        <Pack>true</Pack>
+        <PackagePath>runtimes/$(RustRuntimeIdentifier)/native/%(RustNativeStaged.NativeFileName)</PackagePath>
+      </ContentWithTargetPath>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="IncludeRustNativeInBuildOutputs" DependsOnTargets="StageRustNativeLibrary">
+    <ItemGroup>
+      <TfmSpecificOutput Include="@(RustNativeStaged)">
+        <TargetPath>%(RustNativeStaged.NativeFileName)</TargetPath>
+      </TfmSpecificOutput>
+    </ItemGroup>
+  </Target>
+
+</Project>
