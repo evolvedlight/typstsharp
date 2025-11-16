@@ -5,74 +5,113 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <PackageId>typstsharp</PackageId>
+    <Version>0.1.1-typst0.14.0</Version>
+    <Authors>evolvedlight</Authors>
+    <Description>A .NET wrapper for the Typst typesetting system. Forked from Typst.Net to reduce scope and reduce memory</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>typst</PackageTags>
+    <RepositoryUrl>https://github.com/evolvedlight/typstsharp</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
   <PropertyGroup>
-    <RustProjectDir>$(MSBuildThisFileDirectory)..\typst_core\</RustProjectDir>
-    <RustTargetDir>$(RustProjectDir)target\</RustTargetDir>
-    <RustProfile Condition="'$(Configuration)' == 'Release'">release</RustProfile>
-    <RustProfile Condition="'$(Configuration)' != 'Release'">debug</RustProfile>
-    <RustCargoProfileFlag Condition="'$(Configuration)' == 'Release'">--release</RustCargoProfileFlag>
-    <RustCargoProfileFlag Condition="'$(Configuration)' != 'Release'"></RustCargoProfileFlag>
-    <RustStampFile>$(IntermediateOutputPath)rust-core.stamp</RustStampFile>
-    <RustNativeStagingDir>$(IntermediateOutputPath)rust\native\</RustNativeStagingDir>
-    <RustRuntimeIdentifier Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</RustRuntimeIdentifier>
-    <RustRuntimeIdentifier Condition="'$(RustRuntimeIdentifier)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</RustRuntimeIdentifier>
-    <RustRuntimeIdentifier Condition="'$(RustRuntimeIdentifier)' == ''">any</RustRuntimeIdentifier>
-    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeRustNativeInBuildOutputs</TargetsForTfmSpecificBuildOutput>
+    <HostRustRuntime Condition="'$(HostRustRuntime)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</HostRustRuntime>
+    <HostRustRuntime Condition="'$(HostRustRuntime)' == ''">win-x64</HostRustRuntime>
+    <DefaultRustTargets>linux-x64;linux-arm64;win-x64;win-arm64</DefaultRustTargets>
+    <RustTargets Condition="'$(RustTargets)' == ''">$(DefaultRustTargets)</RustTargets>
+    <RustTargets Condition="'$(HostRustRuntime)' != '' and !$([System.String]::Copy(';$(RustTargets);').Contains(';$(HostRustRuntime);'))">$(RustTargets);$(HostRustRuntime)</RustTargets>
+    <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == '' and '$(OS)' == 'Windows_NT'">x86_64-pc-windows-msvc</WindowsRustTargetTriple>
+    <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == ''">x86_64-pc-windows-gnu</WindowsRustTargetTriple>
+    <RustCoreDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '..', 'typst_core'))))</RustCoreDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <RustTargets>$(HostRustRuntime)</RustTargets>
   </PropertyGroup>
 
   <ItemGroup>
-    <RustCoreSource Include="$(RustProjectDir)src\**\*.rs" />
-    <RustCoreSource Include="$(RustProjectDir)Cargo.toml" />
-    <RustCoreSource Include="$(RustProjectDir)build.rs" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
-  <Target Name="BuildRustCore"
-          Inputs="@(RustCoreSource)"
-          Outputs="$(RustStampFile)"
+  <ItemGroup>
+    <RustRuntime Include="win-x64">
+      <TargetTriple>$(WindowsRustTargetTriple)</TargetTriple>
+      <LibraryFileName>rust_core.dll</LibraryFileName>
+    </RustRuntime>
+    <RustRuntime Include="win-arm64">
+      <TargetTriple>aarch64-pc-windows-msvc</TargetTriple>
+      <LibraryFileName>rust_core.dll</LibraryFileName>
+    </RustRuntime>
+    <RustRuntime Include="linux-x64">
+      <TargetTriple>x86_64-unknown-linux-gnu</TargetTriple>
+      <LibraryFileName>librust_core.so</LibraryFileName>
+    </RustRuntime>
+    <RustRuntime Include="linux-arm64">
+      <TargetTriple>aarch64-unknown-linux-gnu</TargetTriple>
+      <LibraryFileName>librust_core.so</LibraryFileName>
+    </RustRuntime>
+  </ItemGroup>
+
+  <ItemGroup>
+    <RustRuntime Update="@(RustRuntime)">
+      <CargoOutput>$([System.IO.Path]::Combine('$(RustCoreDir)','target','%(TargetTriple)','release','%(LibraryFileName)'))</CargoOutput>
+      <PackagePath>runtimes/%(Identity)/native/%(LibraryFileName)</PackagePath>
+      <PackagePathOnDisk>$([System.IO.Path]::Combine('runtimes','%(Identity)','native','%(LibraryFileName)'))</PackagePathOnDisk>
+    </RustRuntime>
+  </ItemGroup>
+
+  <ItemGroup>
+    <RustTargetsToBuild Include="@(RustRuntime)" />
+  </ItemGroup>
+
+  <Target Name="BuildRust" BeforeTargets="PrepareForBuild">
+    <Message Text="Building rust_core for %(RustTargetsToBuild.Identity) (%(RustTargetsToBuild.TargetTriple))"
+             Importance="high"
+             Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="rustup target add %(RustTargetsToBuild.TargetTriple)"
+          Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="cargo build --release --manifest-path ..\typst_core\Cargo.toml --target %(RustTargetsToBuild.TargetTriple)"
+          WorkingDirectory="$(MSBuildThisFileDirectory)"
+          Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+  </Target>
+
+  <Target Name="CollectRustNativeLibraries"
+          DependsOnTargets="BuildRust"
           BeforeTargets="PrepareForBuild">
-    <Message Text="Building rust_core via cargo $(RustCargoProfileFlag)" Importance="High" />
-    <Exec Command="cargo build --manifest-path &quot;$(RustProjectDir)Cargo.toml&quot; $(RustCargoProfileFlag)" />
-    <Touch Files="$(RustStampFile)" AlwaysCreate="true" />
-  </Target>
-
-  <Target Name="StageRustNativeLibrary"
-          DependsOnTargets="BuildRustCore"
-          BeforeTargets="ResolveReferences">
     <ItemGroup>
-      <RustNativeCandidate Include="$(RustTargetDir)$(RustProfile)\rust_core.dll" Condition="Exists('$(RustTargetDir)$(RustProfile)\rust_core.dll')" />
-      <RustNativeCandidate Include="$(RustTargetDir)$(RustProfile)\librust_core.so" Condition="Exists('$(RustTargetDir)$(RustProfile)\librust_core.so')" />
-      <RustNativeCandidate Include="$(RustTargetDir)$(RustProfile)\librust_core.dylib" Condition="Exists('$(RustTargetDir)$(RustProfile)\librust_core.dylib')" />
+      <RustNativeToPack Include="@(RustRuntime)"
+        Condition="Exists('%(RustRuntime.CargoOutput)')" />
     </ItemGroup>
 
-  <Error Condition="'@(RustNativeCandidate)' == ''" Text="rust_core native library was not found. Did cargo finish successfully?" />
+    <CreateItem Include="@(RustNativeToPack-&gt;'%(CargoOutput)')"
+                AdditionalMetadata="Runtime=%(Identity);PackagePath=%(PackagePath);DestinationPath=$([System.IO.Path]::Combine('$(IntermediateOutputPath)','%(PackagePathOnDisk)'))">
+      <Output TaskParameter="Include" ItemName="RustNativeFiles" />
+    </CreateItem>
 
-    <MakeDir Directories="$(RustNativeStagingDir)" />
-    <Copy SourceFiles="@(RustNativeCandidate)"
-          DestinationFiles="@(RustNativeCandidate-&gt;'$(RustNativeStagingDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(RustNativeFiles)"
+          DestinationFiles="@(RustNativeFiles-&gt;'%(DestinationPath)')"
+          SkipUnchangedFiles="true"
+          Condition="@(RustNativeFiles) != ''" />
 
-    <ItemGroup>
-      <RustNativeStaged Include="@(RustNativeCandidate-&gt;'$(RustNativeStagingDir)%(Filename)%(Extension)')">
-        <NativeFileName>%(Filename)%(Extension)</NativeFileName>
-      </RustNativeStaged>
-
-      <ContentWithTargetPath Include="@(RustNativeStaged)">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        <TargetPath>%(RustNativeStaged.NativeFileName)</TargetPath>
+    <ItemGroup Condition="@(RustNativeFiles) != ''">
+      <None Include="@(RustNativeFiles-&gt;'%(DestinationPath)')">
         <Pack>true</Pack>
-        <PackagePath>runtimes/$(RustRuntimeIdentifier)/native/%(RustNativeStaged.NativeFileName)</PackagePath>
-      </ContentWithTargetPath>
+        <PackagePath>%(RustNativeFiles.PackagePath)</PackagePath>
+        <Visible>false</Visible>
+      </None>
     </ItemGroup>
   </Target>
 
-  <Target Name="IncludeRustNativeInBuildOutputs" DependsOnTargets="StageRustNativeLibrary">
+  <Target Name="CopyNativeAssetsForLocalDev" AfterTargets="CollectRustNativeLibraries">
     <ItemGroup>
-      <TfmSpecificOutput Include="@(RustNativeStaged)">
-        <TargetPath>%(RustNativeStaged.NativeFileName)</TargetPath>
-      </TfmSpecificOutput>
+      <HostNative Include="@(RustNativeFiles)" Condition="'%(Runtime)' == '$(HostRustRuntime)'" />
     </ItemGroup>
+
+    <Copy SourceFiles="@(HostNative-&gt;'%(DestinationPath)')"
+          DestinationFiles="@(HostNative-&gt;'$(OutDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="@(HostNative) != ''" />
   </Target>
 
 </Project>

@@ -1,0 +1,67 @@
+name: release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Determine package version
+        id: version
+        run: |
+          set -euo pipefail
+          tag_name="${GITHUB_REF#refs/tags/}"
+          if [ -z "$tag_name" ]; then
+            tag_name="${{ github.event.release.tag_name }}"
+          fi
+          tag_name=${tag_name##v}
+          base_version=$(grep -m1 '<Version>' src/typstsharp/typstsharp.csproj | sed -E 's/.*<Version>(.+)<\/Version>.*/\1/')
+          suffix="${base_version#*-}"
+          if [ "$suffix" = "$base_version" ]; then
+            suffix=""
+          else
+            suffix="-${suffix}"
+          fi
+          package_version="${tag_name}${suffix}"
+          echo "Using package version: $package_version"
+          echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
+          echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
+
+      - name: Build package
+        uses: ./.github/actions/build-pack
+        with:
+          package-version: ${{ env.PACKAGE_VERSION }}
+
+      - name: Publish package to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "NUGET_API_KEY secret is not set" >&2
+            exit 1
+          fi
+          dotnet nuget push artifacts/*.nupkg \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.nupkg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

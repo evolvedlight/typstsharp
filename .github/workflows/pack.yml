@@ -1,0 +1,51 @@
+name: pack
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Compute package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_version=$(grep -m1 '<Version>' src/typstsharp/typstsharp.csproj | sed -E 's/.*<Version>(.+)<\/Version>.*/\1/')
+          branch="${GITHUB_REF_NAME:-}"
+          if [ -z "$branch" ] && [ -n "${GITHUB_HEAD_REF:-}" ]; then
+            branch="$GITHUB_HEAD_REF"
+          fi
+          if [ "$branch" != "master" ]; then
+            package_version="${base_version}-preview.${GITHUB_RUN_NUMBER}"
+          else
+            package_version="$base_version"
+          fi
+          echo "Base version: $base_version"
+          echo "Branch: ${branch:-unknown}"
+          echo "Using package version: $package_version"
+          echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
+
+      - name: Build package
+        uses: ./.github/actions/build-pack
+        with:
+          package-version: ${{ env.PACKAGE_VERSION }}
+
+      - name: Upload NuGet artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: typst-net-nuget
+          path: artifacts
