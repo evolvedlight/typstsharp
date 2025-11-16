@@ -4,7 +4,7 @@ A .NET 10.0 wrapper around the Typst rendering stack. The managed layer in `src/
 
 ## Prerequisites
 
-- [.NET SDK 10.0 preview](https://dotnet.microsoft.com/) – required to build the managed projects.
+- [.NET SDK 10.0](https://dotnet.microsoft.com/) – required to build the managed projects.
 - [Rust toolchain](https://www.rust-lang.org/tools/install) with `cargo` on your `PATH` – used to build the native `rust_core` cdylib.
 
 ## Building
