@@ -1959,28 +1959,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
-name = "rust_core"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "codespan-reporting",
- "comemo",
- "csbindgen",
- "ecow",
- "pathdiff",
- "serde",
- "serde_json",
- "serde_yaml",
- "typst",
- "typst-eval",
- "typst-html",
- "typst-kit",
- "typst-pdf",
- "typst-render",
- "typst-svg",
-]
-
-[[package]]
 name = "rust_decimal"
 version = "1.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2887,6 +2865,28 @@ dependencies = [
  "siphasher",
  "thin-vec",
  "unicode-math-class",
+]
+
+[[package]]
+name = "typst_core"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "codespan-reporting",
+ "comemo",
+ "csbindgen",
+ "ecow",
+ "pathdiff",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "typst",
+ "typst-eval",
+ "typst-html",
+ "typst-kit",
+ "typst-pdf",
+ "typst-render",
+ "typst-svg",
 ]
 
 [[package]]

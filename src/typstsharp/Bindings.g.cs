@@ -12,7 +12,7 @@ namespace CsBindgen
 {
     internal static unsafe partial class NativeMethods
     {
-        const string __DllName = "rust_core";
+        const string __DllName = "typst_core";
 
 
 
