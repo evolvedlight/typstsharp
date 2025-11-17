@@ -45,7 +45,7 @@ runs:
 
     - uses: Swatinem/rust-cache@v2
       with:
-        workspaces: src\typst_core
+        workspaces: src/typst_core
 
     - name: Restore .NET solution
       shell: bash
