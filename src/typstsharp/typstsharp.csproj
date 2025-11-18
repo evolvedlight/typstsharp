@@ -21,7 +21,10 @@
     <HostRustRuntime Condition="'$(HostRustRuntime)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</HostRustRuntime>
     <HostRustRuntime Condition="'$(HostRustRuntime)' == ''">win-x64</HostRustRuntime>
     <DefaultRustTargets>linux-x64;linux-arm64;win-x64;win-arm64</DefaultRustTargets>
-    <RustTargets Condition="'$(RustTargets)' == ''">$(DefaultRustTargets)</RustTargets>
+    <!-- In Debug builds, default to only the host runtime (Windows or Linux) -->
+    <RustTargets Condition="'$(RustTargets)' == '' and '$(Configuration)' == 'Debug'">$(HostRustRuntime)</RustTargets>
+    <!-- In non-Debug builds, default to all targets -->
+    <RustTargets Condition="'$(RustTargets)' == '' and '$(Configuration)' != 'Debug'">$(DefaultRustTargets)</RustTargets>
     <RustTargets Condition="'$(HostRustRuntime)' != '' and !$([System.String]::Copy(';$(RustTargets);').Contains(';$(HostRustRuntime);'))">$(RustTargets);$(HostRustRuntime)</RustTargets>
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == '' and '$(OS)' == 'Windows_NT'">x86_64-pc-windows-msvc</WindowsRustTargetTriple>
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == ''">x86_64-pc-windows-gnu</WindowsRustTargetTriple>
