@@ -38,15 +38,12 @@ runs:
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: ${{ inputs.rust-version }}
+        cache-workspaces: src/typst_core
+        rust-src-dir: src/typst_core
 
     - name: Add Rust cross-compilation targets
       shell: bash
       run: rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-gnu
-
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: src/typst_core -> target
 
     - name: Restore .NET solution
       shell: bash
