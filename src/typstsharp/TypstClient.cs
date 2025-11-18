@@ -149,7 +149,7 @@ namespace typstsharp
 
         public void SetSysInputs(Dictionary<string, string> inputs)
         {
-            if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
+            if (_disposed) throw new ObjectDisposedException(nameof(TypstClient));
 
             var sysInputsJson = JsonSerializer.Serialize(inputs ?? new Dictionary<string, string>());
             var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
