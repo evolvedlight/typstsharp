@@ -1,16 +1,46 @@
-﻿using typstsharp;
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using typstsharp;
 
-var total = 0;
-using var client = new TypstClient("= Hello");
+var input = """
+    #let title = sys.inputs.title
+    #let data = json(bytes(sys.inputs.data))
 
-const int iterations = 1000;
-var sw = System.Diagnostics.Stopwatch.StartNew();
-for (int i = 0; i < iterations; i++)
+    = This is a sample typst document
+
+    Time to import 
+    
+
+    = Title is #title
+
+    Data item is #data.item and this is a number
+
+    A things is #data.things
+    """;
+
+using var client = new TypstCompiler(input);
+
+var sw = Stopwatch.StartNew();
+
+var sysInputs = new Dictionary<string, object>
 {
-    var output = client.Compile();
-    total++;
+    { "title", "This is file 1." },
+    { "data", new DataObj { item = 17 } }
+};
+client.SetSysInputs(sysInputs);
+var output = client.Compile();
+
+File.WriteAllBytes("output.pdf", output.Buffers[0]);
+
+// open output.pdf via windows
+if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+{
+    Process.Start(new ProcessStartInfo("output.pdf") { UseShellExecute = true });
 }
 
-// check unmanaged memory
-Console.WriteLine($"Total: {total} in {sw.ElapsedMilliseconds} ms");
-
+internal class DataObj
+{
+    public int item { get; set; }
+    public string things { get; set; }
+}

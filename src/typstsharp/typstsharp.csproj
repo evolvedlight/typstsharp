@@ -32,7 +32,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath=""/>
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
   <ItemGroup>
@@ -56,6 +56,10 @@
 
   <ItemGroup>
     <RustTargetsToBuild Include="@(RustRuntime)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="rust\native\" />
   </ItemGroup>
 
   <Target Name="BuildRust" BeforeTargets="PrepareForBuild">
@@ -87,6 +91,14 @@
   <Target Name="CopyNativeAssetsForLocalDev" AfterTargets="CollectRustNativeLibraries">
     <ItemGroup>
       <HostNative Include="@(RustNativeFiles)" Condition="'%(Runtime)' == '$(HostRustRuntime)'" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Content Include="@(HostNative->'%(DestinationPath)')">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <Link>%(Filename)%(Extension)</Link>
+        <Visible>false</Visible>
+      </Content>
     </ItemGroup>
 
     <Copy SourceFiles="@(HostNative->'%(DestinationPath)')" DestinationFiles="@(HostNative->'$(OutDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Condition="@(HostNative) != ''" />
