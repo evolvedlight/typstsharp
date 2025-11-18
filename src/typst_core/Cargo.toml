@@ -1,5 +1,5 @@
 [package]
-name = "rust_core"
+name = "typst_core"
 version = "0.0.1"
 edition = "2024"
 [lib]

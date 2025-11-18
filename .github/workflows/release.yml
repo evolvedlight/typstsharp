@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write  # enable GitHub OIDC token issuance for this job
 
 jobs:
   publish:
@@ -46,16 +47,17 @@ jobs:
         with:
           package-version: ${{ env.PACKAGE_VERSION }}
 
+       # Get a short-lived NuGet API key
+      - name: NuGet login (OIDC → temp API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: evolvedlight
+
       - name: Publish package to NuGet.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "NUGET_API_KEY secret is not set" >&2
-            exit 1
-          fi
           dotnet nuget push artifacts/*.nupkg \
-            --api-key "$NUGET_API_KEY" \
+            --api-key ${{steps.login.outputs.NUGET_API_KEY}} \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 

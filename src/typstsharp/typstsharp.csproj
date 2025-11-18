@@ -25,7 +25,7 @@
     <RustTargets Condition="'$(HostRustRuntime)' != '' and !$([System.String]::Copy(';$(RustTargets);').Contains(';$(HostRustRuntime);'))">$(RustTargets);$(HostRustRuntime)</RustTargets>
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == '' and '$(OS)' == 'Windows_NT'">x86_64-pc-windows-msvc</WindowsRustTargetTriple>
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == ''">x86_64-pc-windows-gnu</WindowsRustTargetTriple>
-    <RustCoreDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '..', 'rust_core'))))</RustCoreDir>
+    <RustCoreDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '..', 'typst_core'))))</RustCoreDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,11 +35,11 @@
   <ItemGroup>
     <RustRuntime Include="win-x64">
       <TargetTriple>$(WindowsRustTargetTriple)</TargetTriple>
-      <LibraryFileName>rust_core.dll</LibraryFileName>
+      <LibraryFileName>typst_core.dll</LibraryFileName>
     </RustRuntime>
     <RustRuntime Include="linux-x64">
       <TargetTriple>x86_64-unknown-linux-gnu</TargetTriple>
-      <LibraryFileName>librust_core.so</LibraryFileName>
+      <LibraryFileName>libtypst_core.so</LibraryFileName>
     </RustRuntime>
   </ItemGroup>
 
