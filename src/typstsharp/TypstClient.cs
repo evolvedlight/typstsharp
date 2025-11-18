@@ -147,6 +147,26 @@ namespace typstsharp
             }
         }
 
+        public void SetSysInputs(Dictionary<string, string> inputs)
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
+
+            var sysInputsJson = JsonSerializer.Serialize(inputs ?? new Dictionary<string, string>());
+            var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
+            try
+            {
+                var ok = CsBindgen.NativeMethods.set_sys_inputs(_compiler, (byte*)sysInputsPtr);
+                if (!ok)
+                {
+                    throw new Exception("Failed to set system inputs");
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(sysInputsPtr);
+            }
+        }
+
 
         public void Dispose()
         {
