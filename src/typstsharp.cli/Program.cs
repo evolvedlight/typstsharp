@@ -19,7 +19,8 @@ var input = """
     A things is #data.things
     """;
 
-using var client = new TypstCompiler(input);
+File.WriteAllText("input.typ", input);
+using var client = new TypstCompiler("input.typ");
 
 var sw = Stopwatch.StartNew();
 

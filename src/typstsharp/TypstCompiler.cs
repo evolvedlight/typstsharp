@@ -17,18 +17,19 @@ public unsafe class TypstCompiler : IDisposable
     /// <summary>
     /// Initializes a new instance of the <see cref="TypstCompiler"/> class.
     /// </summary>
-    /// <param name="input">The Typst source code to compile.</param>
+    /// <param name="inputPath">The path to the Typst source file to compile.</param>
     /// <param name="fonts">Font settings, including system fonts and custom font paths.</param>
     /// <param name="sysInputs">Initial system inputs (legacy, prefer SetSysInputs).</param>
-    /// <param name="root">The root directory for the compilation, used for resolving relative paths.</param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
-    public TypstCompiler(string input, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null, string? root = null)
+    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? Enumerable.Empty<string>();
         bool ignoreSystemFonts = !fonts.IncludeSystemFonts;
 
-        var inputPtr = Marshal.StringToHGlobalAnsi(input);
+        var inputPtr = Marshal.StringToHGlobalAnsi(inputPath);
+
+        var root = inputPath != null ? Path.GetDirectoryName(Path.GetFullPath(inputPath)) : null;
         IntPtr rootPtr = IntPtr.Zero;
         if (!string.IsNullOrWhiteSpace(root))
         {
