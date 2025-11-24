@@ -29,6 +29,7 @@
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == '' and '$(OS)' == 'Windows_NT'">x86_64-pc-windows-msvc</WindowsRustTargetTriple>
     <WindowsRustTargetTriple Condition="'$(WindowsRustTargetTriple)' == ''">x86_64-pc-windows-gnu</WindowsRustTargetTriple>
     <RustCoreDir>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(MSBuildThisFileDirectory)', '..', 'typst_core'))))</RustCoreDir>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);CollectRustNativeLibraries</TargetsForTfmSpecificContentInPackage>
   </PropertyGroup>
 
   <ItemGroup>
@@ -68,7 +69,7 @@
     <Exec Command="cargo build --release --manifest-path ../typst_core/Cargo.toml --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
   </Target>
 
-  <Target Name="CollectRustNativeLibraries" DependsOnTargets="BuildRust" BeforeTargets="PrepareForBuild">
+  <Target Name="CollectRustNativeLibraries" DependsOnTargets="BuildRust">
     <ItemGroup>
       <RustNativeToPack Include="@(RustRuntime)" Condition="Exists('%(RustRuntime.CargoOutput)')" />
     </ItemGroup>
@@ -80,11 +81,9 @@
     <Copy SourceFiles="@(RustNativeFiles)" DestinationFiles="@(RustNativeFiles->'%(DestinationPath)')" SkipUnchangedFiles="true" Condition="@(RustNativeFiles) != ''" />
 
     <ItemGroup Condition="@(RustNativeFiles) != ''">
-      <None Include="@(RustNativeFiles->'%(DestinationPath)')">
-        <Pack>true</Pack>
+      <TfmSpecificPackageFile Include="@(RustNativeFiles->'%(DestinationPath)')">
         <PackagePath>%(RustNativeFiles.PackagePath)</PackagePath>
-        <Visible>false</Visible>
-      </None>
+      </TfmSpecificPackageFile>
     </ItemGroup>
   </Target>
 
