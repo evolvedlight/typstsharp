@@ -70,6 +70,7 @@ pub extern "C" fn create_compiler(
     };
 
     let input_str = unsafe { CStr::from_ptr(input).to_str().unwrap_or("") };
+    let input_path = PathBuf::from(input_str);
     let sys_inputs_str = unsafe { CStr::from_ptr(sys_inputs).to_str().unwrap_or("{}") };
 
     let font_paths_vec: Vec<PathBuf> = unsafe {
@@ -91,7 +92,7 @@ pub extern "C" fn create_compiler(
         root,
         &font_paths_vec,
         inputs,
-        input_str,
+        input_path,
         !ignore_system_fonts,
     ) {
         Ok(world) => Box::into_raw(Box::new(Compiler(world))),
