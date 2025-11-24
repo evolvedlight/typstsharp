@@ -69,7 +69,7 @@
     <Exec Command="cargo build --release --manifest-path ../typst_core/Cargo.toml --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
   </Target>
 
-  <Target Name="CollectRustNativeLibraries" DependsOnTargets="BuildRust">
+  <Target Name="CollectRustNativeLibraries" DependsOnTargets="BuildRust" AfterTargets="BuildRust">
     <ItemGroup>
       <RustNativeToPack Include="@(RustRuntime)" Condition="Exists('%(RustRuntime.CargoOutput)')" />
     </ItemGroup>
