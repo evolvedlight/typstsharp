@@ -82,7 +82,8 @@ impl SystemWorld {
         root: PathBuf,
         font_paths: &[PathBuf],
         inputs: typst::foundations::Dict,
-        input: PathBuf,
+        input_path: Option<PathBuf>,
+        input_content: Option<String>,
         include_system_fonts: bool,
     ) -> StrResult<Self> {
         let mut font_searcher = FontSearcher::new();
@@ -92,15 +93,25 @@ impl SystemWorld {
         // Resolve the main file path relative to the root
         // If the input path is absolute, try to make it relative to the root.
         // If it's already relative, assume it's relative to the root.
-        let relative_path = if input.is_absolute() {
-            input.strip_prefix(&root).map_err(|_| {
-                eco_format!("input file must be contained in the project root")
-            })?
+        let main_id = if let Some(path) = input_path {
+            let relative_path = if path.is_absolute() {
+                path.strip_prefix(&root).map_err(|_| {
+                    eco_format!("input file must be contained in the project root")
+                })?
+            } else {
+                &path
+            };
+            FileId::new(None, VirtualPath::new(relative_path))
         } else {
-            &input
+            FileId::new_fake(VirtualPath::new("<main>"))
         };
 
-        let main_id = FileId::new(None, VirtualPath::new(relative_path));
+        let mut slots = HashMap::new();
+        if let Some(content) = input_content {
+            let mut main_slot = FileSlot::new(main_id);
+            main_slot.source.init(Source::new(main_id, content));
+            slots.insert(main_id, main_slot);
+        }
 
         Ok(Self {
             root,
@@ -113,7 +124,7 @@ impl SystemWorld {
             ),
             book: LazyHash::new(fonts.book.clone()),
             fonts: Arc::new(fonts),
-            slots: Mutex::new(HashMap::new()),
+            slots: Mutex::new(slots),
             package_storage: PackageStorage::new(None, None, crate::download::downloader()),
             now: OnceLock::new(),
         })
@@ -208,6 +219,11 @@ impl<T: Clone> SlotCell<T> {
             fingerprint: 0,
             accessed: false,
         }
+    }
+
+    fn init(&mut self, data: T) {
+        self.data = Some(Ok(data));
+        self.accessed = true;
     }
 
     fn get_or_init(

@@ -19,7 +19,7 @@ namespace CsBindgen
 
 
         [DllImport(__DllName, EntryPoint = "create_compiler", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern Compiler* create_compiler(byte* root, byte* input, byte** font_paths, nuint font_paths_len, byte* sys_inputs, [MarshalAs(UnmanagedType.U1)] bool ignore_system_fonts);
+        internal static extern Compiler* create_compiler(byte* root, byte* input_path, byte* input_source, byte** font_paths, nuint font_paths_len, byte* sys_inputs, [MarshalAs(UnmanagedType.U1)] bool ignore_system_fonts);
 
         [DllImport(__DllName, EntryPoint = "free_compiler", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void free_compiler(Compiler* compiler);

@@ -52,7 +52,8 @@ impl Default for CompileResult {
 #[unsafe(no_mangle)]
 pub extern "C" fn create_compiler(
     root: *const c_char,
-    input: *const c_char,
+    input_path: *const c_char,
+    input_source: *const c_char,
     font_paths: *const *const c_char,
     font_paths_len: usize,
     sys_inputs: *const c_char,
@@ -69,8 +70,24 @@ pub extern "C" fn create_compiler(
         PathBuf::from(root_str)
     };
 
-    let input_str = unsafe { CStr::from_ptr(input).to_str().unwrap_or("") };
-    let input_path = PathBuf::from(input_str);
+    let input_path_buf = if !input_path.is_null() {
+        let s = unsafe { CStr::from_ptr(input_path).to_str().unwrap_or("") };
+        if s.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(s))
+        }
+    } else {
+        None
+    };
+
+    let input_content = if !input_source.is_null() {
+        let s = unsafe { CStr::from_ptr(input_source).to_str().unwrap_or("") };
+        Some(s.to_string())
+    } else {
+        None
+    };
+
     let sys_inputs_str = unsafe { CStr::from_ptr(sys_inputs).to_str().unwrap_or("{}") };
 
     let font_paths_vec: Vec<PathBuf> = unsafe {
@@ -92,7 +109,8 @@ pub extern "C" fn create_compiler(
         root,
         &font_paths_vec,
         inputs,
-        input_path,
+        input_path_buf,
+        input_content,
         !ignore_system_fonts,
     ) {
         Ok(world) => Box::into_raw(Box::new(Compiler(world))),

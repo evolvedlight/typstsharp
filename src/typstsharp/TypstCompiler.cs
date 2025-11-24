@@ -21,15 +21,46 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="fonts">Font settings, including system fonts and custom font paths.</param>
     /// <param name="sysInputs">Initial system inputs (legacy, prefer SetSysInputs).</param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
-    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null)
+    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null, string? root = null)
+        : this(inputPath, null, fonts, sysInputs, root)
+    {
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="TypstCompiler"/> from a source string.
+    /// </summary>
+    /// <param name="source">The Typst source code.</param>
+    /// <param name="fonts">Font settings.</param>
+    /// <param name="sysInputs">System inputs.</param>
+    /// <param name="root">Root directory.</param>
+    /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
+    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null, string? root = null)
+    {
+        return new TypstCompiler(null, source, fonts, sysInputs, root);
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="TypstCompiler"/> from a file path.
+    /// </summary>
+    /// <param name="path">The path to the Typst file.</param>
+    /// <param name="fonts">Font settings.</param>
+    /// <param name="sysInputs">System inputs.</param>
+    /// <param name="root">Root directory.</param>
+    /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
+    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null, string? root = null)
+    {
+        return new TypstCompiler(path, null, fonts, sysInputs, root);
+    }
+
+    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, object>? sysInputs, string? root)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? Enumerable.Empty<string>();
         bool ignoreSystemFonts = !fonts.IncludeSystemFonts;
 
-        var inputPtr = Marshal.StringToHGlobalAnsi(inputPath);
-
-        var root = inputPath != null ? Path.GetDirectoryName(Path.GetFullPath(inputPath)) : null;
+        var inputPathPtr = inputPath != null ? Marshal.StringToHGlobalAnsi(inputPath) : IntPtr.Zero;
+        var inputSourcePtr = inputSource != null ? Marshal.StringToHGlobalAnsi(inputSource) : IntPtr.Zero;
+        
         IntPtr rootPtr = IntPtr.Zero;
         if (!string.IsNullOrWhiteSpace(root))
         {
@@ -53,7 +84,14 @@ public unsafe class TypstCompiler : IDisposable
             fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
             {
                 IntPtr* fontPathsPtr = fontPathsList.Count == 0 ? null : fontPathsRawPtr;
-                _compiler = CsBindgen.NativeMethods.create_compiler((byte*)rootPtr, (byte*)inputPtr, (byte**)fontPathsPtr, (nuint)fontPathsList.Count, (byte*)sysInputsPtr, ignoreSystemFonts);
+                _compiler = CsBindgen.NativeMethods.create_compiler(
+                    (byte*)rootPtr, 
+                    (byte*)inputPathPtr, 
+                    (byte*)inputSourcePtr, 
+                    (byte**)fontPathsPtr, 
+                    (nuint)fontPathsList.Count, 
+                    (byte*)sysInputsPtr, 
+                    ignoreSystemFonts);
             }
 
             if (_compiler == null)
@@ -63,11 +101,9 @@ public unsafe class TypstCompiler : IDisposable
         }
         finally
         {
-            if (rootPtr != IntPtr.Zero)
-            {
-                Marshal.FreeHGlobal(rootPtr);
-            }
-            Marshal.FreeHGlobal(inputPtr);
+            if (rootPtr != IntPtr.Zero) Marshal.FreeHGlobal(rootPtr);
+            if (inputPathPtr != IntPtr.Zero) Marshal.FreeHGlobal(inputPathPtr);
+            if (inputSourcePtr != IntPtr.Zero) Marshal.FreeHGlobal(inputSourcePtr);
             foreach (var ptr in fontPathPtrs) Marshal.FreeHGlobal(ptr);
             Marshal.FreeHGlobal(sysInputsPtr);
         }
