@@ -14,6 +14,6 @@ impl<T: Display> Progress for SilentDownload<T> {
 
 /// Returns a new downloader.
 pub fn downloader() -> Downloader {
-    let user_agent = concat!("typst-net/", env!("CARGO_PKG_VERSION"));
+    let user_agent = concat!("typstsharp/", env!("CARGO_PKG_VERSION"));
     Downloader::new(user_agent)
 }
