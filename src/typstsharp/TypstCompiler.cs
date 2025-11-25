@@ -1,5 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace typstsharp;
 
@@ -13,6 +14,10 @@ public unsafe class TypstCompiler : IDisposable
     public static string EmptyDictionaryJson => "{}";
     private CsBindgen.Compiler* _compiler;
     private bool _disposed = false;
+    private static readonly JsonSerializerOptions sourceGenOptions = new()
+    {
+        TypeInfoResolver = SourceGenerationContext.Default
+    };
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TypstCompiler"/> class.
@@ -52,6 +57,8 @@ public unsafe class TypstCompiler : IDisposable
         return new TypstCompiler(path, null, fonts, sysInputs, root);
     }
 
+    
+
     private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root)
     {
         fonts ??= new Fonts();
@@ -74,7 +81,7 @@ public unsafe class TypstCompiler : IDisposable
             fontPathPtrs[i] = Marshal.StringToHGlobalAnsi(fontPathsList[i]);
         }
 
-        var sysInputsJson = JsonSerializer.Serialize(sysInputs);
+        var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
         var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
 
         try
@@ -213,7 +220,7 @@ public unsafe class TypstCompiler : IDisposable
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
 
-        var sysInputsJson = JsonSerializer.Serialize(inputs);
+        var sysInputsJson = JsonSerializer.Serialize<Dictionary<string, string>>(inputs, sourceGenOptions);
         var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
         try
         {
