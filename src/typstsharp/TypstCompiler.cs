@@ -21,7 +21,7 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="fonts">Font settings, including system fonts and custom font paths.</param>
     /// <param name="sysInputs">Initial system inputs (legacy, prefer SetSysInputs).</param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
-    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null, string? root = null)
+    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null)
         : this(inputPath, null, fonts, sysInputs, root)
     {
     }
@@ -34,7 +34,7 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="sysInputs">System inputs.</param>
     /// <param name="root">Root directory.</param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null, string? root = null)
+    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null)
     {
         return new TypstCompiler(null, source, fonts, sysInputs, root);
     }
@@ -47,12 +47,12 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="sysInputs">System inputs.</param>
     /// <param name="root">Root directory.</param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, object>? sysInputs = null, string? root = null)
+    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null)
     {
         return new TypstCompiler(path, null, fonts, sysInputs, root);
     }
 
-    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, object>? sysInputs, string? root)
+    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? Enumerable.Empty<string>();
@@ -74,9 +74,7 @@ public unsafe class TypstCompiler : IDisposable
             fontPathPtrs[i] = Marshal.StringToHGlobalAnsi(fontPathsList[i]);
         }
 
-
-        var jsonInputDict = (sysInputs ?? []).Select(key => (key.Key, JsonSerializer.Serialize(key.Value))).ToDictionary();
-        var sysInputsJson = JsonSerializer.Serialize(jsonInputDict);
+        var sysInputsJson = JsonSerializer.Serialize(sysInputs);
         var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
 
         try
@@ -211,13 +209,11 @@ public unsafe class TypstCompiler : IDisposable
     /// </summary>
     /// <param name="inputs">A dictionary of key-value pairs. Values are serialized to JSON and passed to the compiler.</param>
     /// <exception cref="Exception">Thrown if the inputs fail to be set in the native compiler.</exception>
-    public void SetSysInputs(Dictionary<string, object> inputs)
+    public void SetSysInputs(Dictionary<string, string> inputs)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
 
-        var jsonInputDict = (inputs ?? []).Select(key => (key.Key, JsonSerializer.Serialize(key.Value))).ToDictionary();
-
-        var sysInputsJson = JsonSerializer.Serialize(jsonInputDict);
+        var sysInputsJson = JsonSerializer.Serialize(inputs);
         var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
         try
         {

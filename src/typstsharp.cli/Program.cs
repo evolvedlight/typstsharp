@@ -18,16 +18,18 @@ var input = """
     Data item is #data.item and this is a number
 
     A things is #data.things
+
+    All inputs: #sys.inputs
     """;
 
 File.WriteAllText("input.typ", input);
 // Use the constructor or FromFile
 using var clientFile = new TypstCompiler("input.typ");
 
-var sysInputs = new Dictionary<string, object>
+var sysInputs = new Dictionary<string, string>
 {
     { "title", "This is file 1." },
-    { "data", new DataObj { item = 17 } }
+    { "data", System.Text.Json.JsonSerializer.Serialize(new DataObj { item = 17 }) }
 };
 clientFile.SetSysInputs(sysInputs);
 var outputFile = clientFile.Compile();
