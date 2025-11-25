@@ -2,6 +2,83 @@
 
 A .NET 10.0 wrapper around the Typst rendering stack. The managed layer in `src/typstsharp` calls into the Rust `typst_core` crate via P/Invoke and exposes convenient helpers for C# consumers plus a simple CLI.
 
+## Using
+
+A simple example:
+
+```csharp
+#:package typstsharp@0.0.8
+
+using typstsharp;
+
+var compiler = TypstCompiler.FromSource("= Hello World!");
+var result = compiler.Compile();
+
+var file = result.Buffers[0];
+await File.WriteAllBytesAsync("output.pdf", file);
+Console.WriteLine("PDF generated: output.pdf");
+
+// Open the generated PDF file (works on Windows)
+System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("output.pdf") { UseShellExecute = true });
+```
+
+A more complicated example where we bulk generate PDFs:
+```csharp
+#:package typstsharp@0.0.8
+
+using typstsharp;
+
+var typstInput = """
+#let (
+  first-name,
+  points-balance,
+) = sys.inputs
+
+#set page(header: align(
+  right + bottom,
+  text("Logo"),
+))
+#set text(font: "IBM Plex Sans")
+
+Hello *#first-name,*
+
+You have accrued
+#underline[#points-balance]
+GlorboCorp Rewards Points
+last year!
+""";
+
+var compiler = TypstCompiler.FromSource(typstInput);
+Directory.CreateDirectory("output");
+
+var people = new Dictionary<string, int>
+{
+    ["Alice"] = 1200,
+    ["Bob"] = 850,
+    ["Charlie"] = 4300,
+};
+
+foreach (var (person, balance) in people)
+{
+    compiler.SetSysInputs(new Dictionary<string, string>
+    {
+        ["first-name"] = person,
+        ["points-balance"] = balance.ToString(),
+    });
+
+    var result = compiler.Compile();
+
+    var file = result.Buffers[0];
+    await File.WriteAllBytesAsync($"output/output{person}.pdf", file);
+    Console.WriteLine($"PDF generated: output{person}.pdf");
+}
+
+System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("output") { UseShellExecute = true });
+```
+
+
+You can easily use this inside of an ASP.Net Server (just ensure you lazy load and cache the TypstCompiler to reduce from 40ms to around 3ms for a normal compile).
+
 ## Prerequisites
 
 - [.NET SDK 10.0](https://dotnet.microsoft.com/) – required to build the managed projects.
@@ -31,37 +108,6 @@ You can override the target runtimes by setting the `RustTargets` property (e.g.
 ```
 
 Because the Rust binary is registered as a runtime asset, `typst_core.dll`/`libtypst_core.so` will appear beside the CLI executable automatically.
-
-## Usage
-
-Here's a minimal example of how to use `typstsharp` to compile a document:
-
-```csharp
-using typstsharp;
-using System.IO;
-
-// The Typst source code
-var input = """
-    #let title = sys.inputs.title
-    = Hello, #title!
-    """;
-
-// Create a compiler instance
-using var client = new TypstCompiler(input);
-
-// Set system inputs, which are accessible from the Typst script
-var sysInputs = new Dictionary<string, object>
-{
-    { "title", "World" }
-};
-client.SetSysInputs(sysInputs);
-
-// Compile the document
-var output = client.Compile();
-
-// Save the output to a file
-File.WriteAllBytes("output.pdf", output.Buffers[0]);
-```
 
 ## Notes
 
