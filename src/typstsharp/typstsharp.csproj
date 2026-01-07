@@ -42,7 +42,7 @@
       <LibraryFileName>typst_core.dll</LibraryFileName>
     </RustRuntime>
     <RustRuntime Include="linux-x64">
-      <TargetTriple>x86_64-unknown-linux-gnu</TargetTriple>
+      <TargetTriple>x86_64-unknown-linux-musl</TargetTriple>
       <LibraryFileName>libtypst_core.so</LibraryFileName>
     </RustRuntime>
   </ItemGroup>
@@ -66,7 +66,9 @@
   <Target Name="BuildRust" BeforeTargets="PrepareForBuild">
     <Message Text="Building typst_core for %(RustTargetsToBuild.Identity) (%(RustTargetsToBuild.TargetTriple))" Importance="high" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
     <Exec Command="rustup target add %(RustTargetsToBuild.TargetTriple)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
-    <Exec Command="cargo build --release --manifest-path ../typst_core/Cargo.toml --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --manifest-path ../typst_core/Cargo.toml --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="'%(RustTargetsToBuild.TargetTriple)' == 'x86_64-unknown-linux-musl' and $([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="x86_64-linux-musl-gcc -shared -o $(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.so -Wl,--whole-archive $(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.a -Wl,--no-whole-archive" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="'%(RustTargetsToBuild.TargetTriple)' == 'x86_64-unknown-linux-musl' and $([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="cargo build --release --manifest-path ../typst_core/Cargo.toml --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="'%(RustTargetsToBuild.TargetTriple)' != 'x86_64-unknown-linux-musl' and $([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
   </Target>
 
   <Target Name="CollectRustNativeLibraries" DependsOnTargets="BuildRust" AfterTargets="BuildRust">

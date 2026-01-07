@@ -32,8 +32,16 @@ runs:
           clang \
           zlib1g-dev \
           mingw-w64 \
-          ca-certificates
-          
+          ca-certificates \
+          musl-tools
+
+    - name: Configure Musl Linker
+      shell: bash
+      run: |
+        if [ ! -f /usr/local/bin/x86_64-linux-musl-gcc ]; then
+          sudo ln -s $(which musl-gcc) /usr/local/bin/x86_64-linux-musl-gcc
+        fi
+
     - name: Install Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
@@ -43,7 +51,7 @@ runs:
 
     - name: Add Rust cross-compilation targets
       shell: bash
-      run: rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-gnu
+      run: rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-musl
 
     - name: Restore .NET solution
       shell: bash
@@ -51,6 +59,9 @@ runs:
 
     - name: Pack typstsharp
       shell: bash
+      env:
+        CC_x86_64_unknown_linux_musl: x86_64-linux-musl-gcc
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: x86_64-linux-musl-gcc
       run: |
         set -euo pipefail
         mkdir -p "${{ inputs.output-directory }}"
