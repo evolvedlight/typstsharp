@@ -1,0 +1,18 @@
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine
+
+WORKDIR /app
+
+# Copy artifacts
+COPY artifacts /app/artifacts
+
+# Copy TestApp
+COPY repro/TestApp /app/TestApp
+
+WORKDIR /app/TestApp
+
+# Restore and build
+RUN dotnet restore
+RUN dotnet build -c Release
+
+# Run
+CMD ["dotnet", "run", "-c", "Release"]
