@@ -20,7 +20,7 @@
   <PropertyGroup>
     <HostRustRuntime Condition="'$(HostRustRuntime)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</HostRustRuntime>
     <HostRustRuntime Condition="'$(HostRustRuntime)' == ''">win-x64</HostRustRuntime>
-    <DefaultRustTargets>linux-x64;linux-musl-x64;win-x64;win-arm64</DefaultRustTargets>
+    <DefaultRustTargets>linux-x64;win-x64;win-arm64</DefaultRustTargets>
     <!-- In Debug builds, default to only the host runtime (Windows or Linux) -->
     <RustTargets Condition="'$(RustTargets)' == '' and '$(Configuration)' == 'Debug'">$(HostRustRuntime)</RustTargets>
     <!-- In non-Debug builds, default to all targets -->
@@ -45,10 +45,7 @@
       <TargetTriple>x86_64-unknown-linux-musl</TargetTriple>
       <LibraryFileName>libtypst_core.so</LibraryFileName>
     </RustRuntime>
-    <RustRuntime Include="linux-musl-x64">
-      <TargetTriple>x86_64-unknown-linux-musl</TargetTriple>
-      <LibraryFileName>libtypst_core.so</LibraryFileName>
-    </RustRuntime>
+
   </ItemGroup>
 
   <ItemGroup>
