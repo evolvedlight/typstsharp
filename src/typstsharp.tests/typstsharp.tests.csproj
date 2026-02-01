@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="PdfPig" Version="0.1.13" />
+    <PackageReference Include="TUnit" Version="1.12.102" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\typstsharp\typstsharp.csproj" />
+  </ItemGroup>
+
+</Project>
