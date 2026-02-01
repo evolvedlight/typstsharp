@@ -1,4 +1,5 @@
 name: Build Typst.Net package
+description: Builds and packs the Typst.Net Nuget package including native dependencies
 inputs:
   dotnet-version:
     description: .NET SDK version to install

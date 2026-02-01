@@ -45,6 +45,10 @@ jobs:
         with:
           package-version: ${{ env.PACKAGE_VERSION }}
 
+      - name: Run tests
+        shell: bash
+        run: dotnet test --solution typstsharp.slnx
+
       - name: Upload NuGet artifact
         uses: actions/upload-artifact@v5
         with:
