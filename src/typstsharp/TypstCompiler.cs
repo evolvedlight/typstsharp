@@ -62,29 +62,29 @@ public unsafe class TypstCompiler : IDisposable
     private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root, string? packagePath = null)
     {
         fonts ??= new Fonts();
-        var fontPaths = fonts.FontPaths ?? Enumerable.Empty<string>();
+        var fontPaths = fonts.FontPaths ?? [];
         bool ignoreSystemFonts = !fonts.IncludeSystemFonts;
 
-        var inputPathPtr = inputPath != null ? Marshal.StringToHGlobalAnsi(inputPath) : IntPtr.Zero;
-        var inputSourcePtr = inputSource != null ? Marshal.StringToHGlobalAnsi(inputSource) : IntPtr.Zero;
+        var inputPathPtr = inputPath != null ? Marshal.StringToCoTaskMemUTF8(inputPath) : IntPtr.Zero;
+        var inputSourcePtr = inputSource != null ? Marshal.StringToCoTaskMemUTF8(inputSource) : IntPtr.Zero;
         
         IntPtr rootPtr = IntPtr.Zero;
         if (!string.IsNullOrWhiteSpace(root))
         {
-            rootPtr = Marshal.StringToHGlobalAnsi(root);
+            rootPtr = Marshal.StringToCoTaskMemUTF8(root);
         }
 
         var fontPathsList = fontPaths.ToList();
         var fontPathPtrs = new IntPtr[fontPathsList.Count];
         for (int i = 0; i < fontPathsList.Count; i++)
         {
-            fontPathPtrs[i] = Marshal.StringToHGlobalAnsi(fontPathsList[i]);
+            fontPathPtrs[i] = Marshal.StringToCoTaskMemUTF8(fontPathsList[i]);
         }
 
-        var packagePathPtr = packagePath != null ? Marshal.StringToHGlobalAnsi(packagePath) : IntPtr.Zero;
+        var packagePathPtr = packagePath != null ? Marshal.StringToCoTaskMemUTF8(packagePath) : IntPtr.Zero;
 
         var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
-        var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
+        var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
 
         try
         {
@@ -109,12 +109,12 @@ public unsafe class TypstCompiler : IDisposable
         }
         finally
         {
-            if (rootPtr != IntPtr.Zero) Marshal.FreeHGlobal(rootPtr);
-            if (inputPathPtr != IntPtr.Zero) Marshal.FreeHGlobal(inputPathPtr);
-            if (inputSourcePtr != IntPtr.Zero) Marshal.FreeHGlobal(inputSourcePtr);
-            foreach (var ptr in fontPathPtrs) Marshal.FreeHGlobal(ptr);
-            if (packagePathPtr != IntPtr.Zero) Marshal.FreeHGlobal(packagePathPtr);
-            Marshal.FreeHGlobal(sysInputsPtr);
+            if (rootPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(rootPtr);
+            if (inputPathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputPathPtr);
+            if (inputSourcePtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputSourcePtr);
+            foreach (var ptr in fontPathPtrs) Marshal.FreeCoTaskMem(ptr);
+            if (packagePathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(packagePathPtr);
+            Marshal.FreeCoTaskMem(sysInputsPtr);
         }
     }
 
@@ -132,7 +132,7 @@ public unsafe class TypstCompiler : IDisposable
         {
             if (native.error != null)
             {
-                var error = Marshal.PtrToStringAnsi((nint)native.error) ?? "Unknown Typst error";
+                var error = Marshal.PtrToStringUTF8((nint)native.error) ?? "Unknown Typst error";
                 throw new InvalidOperationException(error);
             }
 
@@ -157,7 +157,7 @@ public unsafe class TypstCompiler : IDisposable
                 for (nuint i = 0; i < native.warnings_len; i++)
                 {
                     var warning = native.warnings[i];
-                    managedWarnings.Add(Marshal.PtrToStringAnsi((nint)warning.message) ?? string.Empty);
+                    managedWarnings.Add(Marshal.PtrToStringUTF8((nint)warning.message) ?? string.Empty);
                 }
             }
 
@@ -225,7 +225,7 @@ public unsafe class TypstCompiler : IDisposable
         if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
 
         var sysInputsJson = JsonSerializer.Serialize<Dictionary<string, string>>(inputs, sourceGenOptions);
-        var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
+        var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
         try
         {
             var ok = CsBindgen.NativeMethods.set_sys_inputs(_compiler, (byte*)sysInputsPtr);
@@ -236,7 +236,7 @@ public unsafe class TypstCompiler : IDisposable
         }
         finally
         {
-            Marshal.FreeHGlobal(sysInputsPtr);
+            Marshal.FreeCoTaskMem(sysInputsPtr);
         }
     }
 
