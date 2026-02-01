@@ -56,6 +56,7 @@ pub extern "C" fn create_compiler(
     input_source: *const c_char,
     font_paths: *const *const c_char,
     font_paths_len: usize,
+    package_path: *const c_char,
     sys_inputs: *const c_char,
     ignore_system_fonts: bool,
 ) -> *mut Compiler {
@@ -103,11 +104,23 @@ pub extern "C" fn create_compiler(
             .collect()
     };
 
+    let package_path_buf = if !package_path.is_null() {
+        let s = unsafe { CStr::from_ptr(package_path).to_str().unwrap_or("") };
+        if s.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(s))
+        }
+    } else {
+        None
+    };
+
     let inputs: Dict = serde_json::from_str(sys_inputs_str).unwrap_or_default();
 
     match SystemWorld::new(
         root,
         &font_paths_vec,
+        package_path_buf,
         inputs,
         input_path_buf,
         input_content,

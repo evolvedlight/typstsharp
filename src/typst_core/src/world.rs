@@ -81,6 +81,7 @@ impl SystemWorld {
     pub fn new(
         root: PathBuf,
         font_paths: &[PathBuf],
+        package_path: Option<PathBuf>,
         inputs: typst::foundations::Dict,
         input_path: Option<PathBuf>,
         input_content: Option<String>,
@@ -125,7 +126,7 @@ impl SystemWorld {
             book: LazyHash::new(fonts.book.clone()),
             fonts: Arc::new(fonts),
             slots: Mutex::new(slots),
-            package_storage: PackageStorage::new(None, None, crate::download::downloader()),
+            package_storage: PackageStorage::new(None, package_path, crate::download::downloader()),
             now: OnceLock::new(),
         })
     }

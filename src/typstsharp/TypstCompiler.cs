@@ -26,8 +26,8 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="fonts">Font settings, including system fonts and custom font paths.</param>
     /// <param name="sysInputs">Initial system inputs (legacy, prefer SetSysInputs).</param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
-    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null)
-        : this(inputPath, null, fonts, sysInputs, root)
+    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
+        : this(inputPath, null, fonts, sysInputs, root, packagePath)
     {
     }
 
@@ -39,9 +39,9 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="sysInputs">System inputs.</param>
     /// <param name="root">Root directory.</param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null)
+    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
     {
-        return new TypstCompiler(null, source, fonts, sysInputs, root);
+        return new TypstCompiler(null, source, fonts, sysInputs, root, packagePath);
     }
 
     /// <summary>
@@ -52,14 +52,14 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="sysInputs">System inputs.</param>
     /// <param name="root">Root directory.</param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null)
+    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
     {
-        return new TypstCompiler(path, null, fonts, sysInputs, root);
+        return new TypstCompiler(path, null, fonts, sysInputs, root, packagePath);
     }
 
     
 
-    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root)
+    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root, string? packagePath = null)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? Enumerable.Empty<string>();
@@ -81,6 +81,8 @@ public unsafe class TypstCompiler : IDisposable
             fontPathPtrs[i] = Marshal.StringToHGlobalAnsi(fontPathsList[i]);
         }
 
+        var packagePathPtr = packagePath != null ? Marshal.StringToHGlobalAnsi(packagePath) : IntPtr.Zero;
+
         var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
         var sysInputsPtr = Marshal.StringToHGlobalAnsi(sysInputsJson);
 
@@ -95,6 +97,7 @@ public unsafe class TypstCompiler : IDisposable
                     (byte*)inputSourcePtr, 
                     (byte**)fontPathsPtr, 
                     (nuint)fontPathsList.Count, 
+                    (byte*)packagePathPtr,
                     (byte*)sysInputsPtr, 
                     ignoreSystemFonts);
             }
@@ -110,6 +113,7 @@ public unsafe class TypstCompiler : IDisposable
             if (inputPathPtr != IntPtr.Zero) Marshal.FreeHGlobal(inputPathPtr);
             if (inputSourcePtr != IntPtr.Zero) Marshal.FreeHGlobal(inputSourcePtr);
             foreach (var ptr in fontPathPtrs) Marshal.FreeHGlobal(ptr);
+            if (packagePathPtr != IntPtr.Zero) Marshal.FreeHGlobal(packagePathPtr);
             Marshal.FreeHGlobal(sysInputsPtr);
         }
     }
