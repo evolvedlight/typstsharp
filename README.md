@@ -82,7 +82,7 @@ You can easily use this inside of an ASP.Net Server (just ensure you lazy load a
 ## Prerequisites
 
 - [.NET SDK 10.0](https://dotnet.microsoft.com/) – required to build the managed projects.
-- [Rust toolchain](https://www.rust-lang.org/tools/install) with `cargo` on your `PATH` – used to build the native `typst_core` cdylib.
+- [Rust toolchain](https://www.rust-lang.org/tools/install) (with `cargo`) – **only required if you are building the project from source.** The NuGet package includes pre-compiled native binaries.
 
 ## Building
 

@@ -9,7 +9,7 @@
     <PackageId>typstsharp</PackageId>
     <Version>0.0.1-typst0.14.0</Version>
     <Authors>evolvedlight</Authors>
-    <Description>A .NET wrapper for the Typst typesetting system. (this is an experimental fork to include the binaries in the package for multiple architectures)</Description>
+    <Description>A .NET wrapper for the Typst typesetting system.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>typst;typesetting;pdf;rust</PackageTags>
     <RepositoryUrl>https://github.com/evolvedlight/typstsharp</RepositoryUrl>
