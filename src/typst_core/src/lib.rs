@@ -10,7 +10,7 @@ mod world;
 use ecow::EcoString;
 use typst::diag::{SourceDiagnostic, StrResult, Warned};
 use typst::foundations::Dict;
-use typst::layout::PagedDocument;
+use typst_layout::PagedDocument;
 use world::SystemWorld;
 
 // This represents the stateful compiler in Rust.
@@ -169,6 +169,7 @@ fn compile_inner(
     format: &str,
     ppi: f32,
 ) -> StrResult<(Vec<Vec<u8>>, Vec<SourceDiagnostic>)> {
+    world.reset_time();
     let (document, warnings) = match typst::compile::<PagedDocument>(world) {
         Warned { output, warnings } => {
             let doc = output.map_err(|errors| EcoString::from(format!("{:?}", errors)))?;

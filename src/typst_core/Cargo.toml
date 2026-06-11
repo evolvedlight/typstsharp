@@ -18,17 +18,21 @@ pathdiff = "0.2"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-typst = "0.14.2"
-typst-kit = { version = "0.14.2", features = [
-    "downloads",
-    "embed-fonts",
+typst = "0.15.0-rc.1"
+typst-kit = { version = "0.15.0-rc.1", features = [
+    "system-packages",
+    "embedded-fonts",
+    "scan-fonts",
+    "system-downloader",
+    "datetime",
     "vendor-openssl",
 ] }
-typst-pdf = "0.14.2"
-typst-svg = "0.14.2"
-typst-render = "0.14.2"
-typst-eval = "0.14.2"
-typst-html = "0.14.2"
+typst-pdf = "0.15.0-rc.1"
+typst-svg = "0.15.0-rc.1"
+typst-render = "0.15.0-rc.1"
+typst-eval = "0.15.0-rc.1"
+typst-html = "0.15.0-rc.1"
+typst-layout = "0.15.0-rc.1"
 
 [build-dependencies]
 csbindgen = "1.9.7"

@@ -486,3 +486,7 @@ $RECYCLE.BIN/
 # Rust native build artifacts
 src/typstsharp/rust/native/*
 src/typst_core/target/*
+
+# Local clone of the open source typst repository
+typst-repo/
+

@@ -1,6 +1,6 @@
 use ecow::eco_format;
 use typst::diag::StrResult;
-use typst::layout::PagedDocument;
+use typst_layout::PagedDocument;
 
 /// An image format to export in.
 pub enum ImageExportFormat {
@@ -15,13 +15,25 @@ fn export_image(
     ppi: f32,
 ) -> StrResult<Vec<Vec<u8>>> {
     let mut buffers = Vec::new();
-    for page in &document.pages {
+    for page in document.pages() {
         let buffer = match fmt {
-            ImageExportFormat::Png => typst_render::render(page, ppi / 72.0)
-                .encode_png()
-                .map_err(|err| eco_format!("failed to write PNG file ({err})"))?,
+            ImageExportFormat::Png => typst_render::render(
+                page,
+                &typst_render::RenderOptions {
+                    pixel_per_pt: typst::utils::Scalar::new((ppi / 72.0) as f64),
+                    render_bleed: false,
+                },
+            )
+            .encode_png()
+            .map_err(|err| eco_format!("failed to write PNG file ({err})"))?,
             ImageExportFormat::Svg => {
-                let svg = typst_svg::svg(page);
+                let svg = typst_svg::svg(
+                    page,
+                    &typst_svg::SvgOptions {
+                        render_bleed: false,
+                        pretty: false,
+                    },
+                );
                 svg.as_bytes().to_vec()
             }
         };
