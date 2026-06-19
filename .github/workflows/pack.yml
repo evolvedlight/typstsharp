@@ -99,8 +99,9 @@ jobs:
         env:
           MSYS2_ARG_CONV_EXCL: "*"
         run: |
+          dotnet nuget add source "${{ github.workspace }}/artifacts" --name local-artifacts
           dotnet nuget locals all --clear
-          dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --source "${{ github.workspace }}/artifacts" --source https://api.nuget.org/v3/index.json
+          dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
           dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
 
       - name: Run tests (Alpine musl)
@@ -108,8 +109,9 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace mcr.microsoft.com/dotnet/sdk:10.0-alpine sh -c "
+            dotnet nuget add source /workspace/artifacts --name local-artifacts
             dotnet nuget locals all --clear
-            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --source /workspace/artifacts --source https://api.nuget.org/v3/index.json
+            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
             dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
           "
 
@@ -121,7 +123,8 @@ jobs:
             dnf install -y curl tar icu
             curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --install-dir /usr/share/dotnet
             ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet
+            dotnet nuget add source /workspace/artifacts --name local-artifacts
             dotnet nuget locals all --clear
-            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --source /workspace/artifacts --source https://api.nuget.org/v3/index.json
+            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
             dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
           "
