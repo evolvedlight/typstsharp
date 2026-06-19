@@ -97,7 +97,7 @@ jobs:
         if: matrix.test_type == ''
         shell: bash
         env:
-          MSYS_NO_PATHCONV: 1
+          MSYS2_ARG_CONV_EXCL: "*"
         run: |
           dotnet nuget locals all --clear
           dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --source "${{ github.workspace }}/artifacts" --source https://api.nuget.org/v3/index.json
