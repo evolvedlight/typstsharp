@@ -98,8 +98,8 @@ jobs:
         shell: bash
         run: |
           dotnet nuget locals all --clear
-          dotnet restore src/typstsharp.tests/typstsharp.tests.csproj /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source "${{ github.workspace }}/artifacts" --source https://api.nuget.org/v3/index.json
-          dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+          dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --source "${{ github.workspace }}/artifacts" --source https://api.nuget.org/v3/index.json
+          dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
 
       - name: Run tests (Alpine musl)
         if: matrix.test_type == 'docker-alpine'
@@ -107,8 +107,8 @@ jobs:
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace mcr.microsoft.com/dotnet/sdk:10.0-alpine sh -c "
             dotnet nuget locals all --clear
-            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source /workspace/artifacts --source https://api.nuget.org/v3/index.json
-            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --source /workspace/artifacts --source https://api.nuget.org/v3/index.json
+            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
           "
 
       - name: Run tests (Fedora)
@@ -116,8 +116,10 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace fedora:40 sh -c "
-            dnf install -y dotnet-sdk-10.0
+            dnf install -y curl tar icu
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --install-dir /usr/share/dotnet
+            ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet
             dotnet nuget locals all --clear
-            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source /workspace/artifacts --source https://api.nuget.org/v3/index.json
-            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --source /workspace/artifacts --source https://api.nuget.org/v3/index.json
+            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
           "
