@@ -98,7 +98,7 @@ jobs:
         shell: bash
         run: |
           dotnet nuget locals all --clear
-          dotnet test src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source artifacts
+          dotnet test src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source "${{ github.workspace }}/artifacts"
 
       - name: Run tests (Alpine musl)
         if: matrix.test_type == 'docker-alpine'
@@ -106,7 +106,7 @@ jobs:
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace mcr.microsoft.com/dotnet/sdk:10.0-alpine sh -c "
             dotnet nuget locals all --clear
-            dotnet test src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source artifacts
+            dotnet test src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source /workspace/artifacts
           "
 
       - name: Run tests (Fedora)
@@ -116,5 +116,5 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace fedora:40 sh -c "
             dnf install -y dotnet-sdk-10.0
             dotnet nuget locals all --clear
-            dotnet test src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source artifacts
+            dotnet test src/typstsharp.tests/typstsharp.tests.csproj -c Release /p:UsePackagedLibrary=true /p:PackageVersion=${{ needs.pack.outputs.package_version }} --source /workspace/artifacts
           "

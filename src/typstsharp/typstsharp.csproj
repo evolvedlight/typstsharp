@@ -7,7 +7,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <PackageId>typstsharp</PackageId>
-    <Version>0.0.1-typst0.14.0</Version>
+    <Version>0.0.1-typst0.15.0</Version>
     <Authors>evolvedlight</Authors>
     <Description>A .NET wrapper for the Typst typesetting system.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
