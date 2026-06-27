@@ -1,6 +1,8 @@
 # typstsharp
 
-A .NET 10.0 wrapper around the Typst rendering stack. The managed layer in `src/typstsharp` calls into the Rust `typst_core` crate via P/Invoke and exposes convenient helpers for C# consumers plus a simple CLI.
+A .NET 10.0 wrapper around the Typst 0.15 rendering stack. The managed layer in `src/typstsharp` calls into the Rust `typst_core` crate via P/Invoke and exposes convenient helpers for C# consumers plus a simple CLI.
+
+For the latest changes, see our [Release Notes](RELEASENOTES.md).
 
 ## Using
 
@@ -76,6 +78,15 @@ foreach (var (person, balance) in people)
 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("output") { UseShellExecute = true });
 ```
 
+### PDF Standards (Typst 0.15+)
+You can export documents using specific PDF standards (like PDF/A or PDF/X) by passing them to `Compile()`. You can even specify multiple standards at once:
+
+```csharp
+var compiler = TypstCompiler.FromSource("= Archival Document");
+var result = compiler.Compile(format: "pdf", pdfStandards: new[] { "a-2b", "v-1.7" });
+
+await File.WriteAllBytesAsync("archival.pdf", result.Buffers[0]);
+```
 
 You can easily use this inside of an ASP.Net Server (just ensure you lazy load and cache the TypstCompiler to reduce from 40ms to around 3ms for a normal compile).
 
@@ -93,7 +104,7 @@ You can easily use this inside of an ASP.Net Server (just ensure you lazy load a
 
 The build will automatically:
 
-1. Run `cargo build --release` on `src/typst_core` for each target runtime identifier (RID). By default, this includes `win-x64`, `linux-x64`, and others. For local debug builds, it only builds for the host architecture.
+1. Run `cargo build --release` on `src/typst_core` for each target runtime identifier (RID). By default, this includes `win-x64`, `linux-x64`, and others. For local debug builds, it only builds for the host architecture. Note that the build will automatically fallback to `gnu` from `musl` on Linux if `musl-gcc` is not available on the system.
 2. Stage the produced native libraries under `obj/`.
 3. Add the libraries to the managed project's runtime assets so that `dotnet publish`/`dotnet pack` place the files under `runtimes/<rid>/native/` in the final artifact.
 4. For local development, the native binary for the host architecture is copied to the output directory of any project referencing `typstsharp`, ensuring it's available for debugging.

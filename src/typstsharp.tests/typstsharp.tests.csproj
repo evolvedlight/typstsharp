@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -14,8 +14,12 @@
     <PackageReference Include="TUnit" Version="1.12.102" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(UsePackagedLibrary)' != 'true'">
     <ProjectReference Include="..\typstsharp\typstsharp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePackagedLibrary)' == 'true'">
+    <PackageReference Include="typstsharp" Version="$(PackageVersion)" />
   </ItemGroup>
 
 </Project>

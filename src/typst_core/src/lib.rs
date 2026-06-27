@@ -10,7 +10,7 @@ mod world;
 use ecow::EcoString;
 use typst::diag::{SourceDiagnostic, StrResult, Warned};
 use typst::foundations::Dict;
-use typst::layout::PagedDocument;
+use typst_layout::PagedDocument;
 use world::SystemWorld;
 
 // This represents the stateful compiler in Rust.
@@ -168,7 +168,9 @@ fn compile_inner(
     world: &mut SystemWorld,
     format: &str,
     ppi: f32,
+    standards: &[typst_pdf::PdfStandard],
 ) -> StrResult<(Vec<Vec<u8>>, Vec<SourceDiagnostic>)> {
+    world.reset_time();
     let (document, warnings) = match typst::compile::<PagedDocument>(world) {
         Warned { output, warnings } => {
             let doc = output.map_err(|errors| EcoString::from(format!("{:?}", errors)))?;
@@ -176,16 +178,70 @@ fn compile_inner(
         }
     };
 
-    let buffers = compiler::export(&document, format, ppi, &[])?;
+    let buffers = compiler::export(&document, format, ppi, standards)?;
     Ok((buffers, warnings))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn compile(compiler: *mut Compiler) -> CompileResult {
+pub extern "C" fn compile(
+    compiler: *mut Compiler,
+    format_ptr: *const std::os::raw::c_char,
+    ppi: f32,
+    pdf_standards: *const std::os::raw::c_char,
+) -> CompileResult {
     let compiler = unsafe { &mut *compiler };
-    let format_str = "pdf";
-    let ppi = 144.0;
-    match compile_inner(&mut compiler.0, format_str, ppi) {
+    let format_str = if format_ptr.is_null() {
+        "pdf"
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(format_ptr).to_str().unwrap_or("pdf") }
+    };
+
+    let standards_str = if pdf_standards.is_null() {
+        ""
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(pdf_standards).to_str().unwrap_or("") }
+    };
+
+    let mut standards = Vec::new();
+    if !standards_str.is_empty() {
+        for s in standards_str.split(',') {
+            let s = s.trim();
+            if !s.is_empty() {
+                let parsed = match s.to_lowercase().as_str() {
+                    "1.4" | "v-1.4" => Some(typst_pdf::PdfStandard::V_1_4),
+                    "1.5" | "v-1.5" => Some(typst_pdf::PdfStandard::V_1_5),
+                    "1.6" | "v-1.6" => Some(typst_pdf::PdfStandard::V_1_6),
+                    "1.7" | "v-1.7" => Some(typst_pdf::PdfStandard::V_1_7),
+                    "2.0" | "v-2.0" => Some(typst_pdf::PdfStandard::V_2_0),
+                    "a-1b" => Some(typst_pdf::PdfStandard::A_1b),
+                    "a-1a" => Some(typst_pdf::PdfStandard::A_1a),
+                    "a-2b" => Some(typst_pdf::PdfStandard::A_2b),
+                    "a-2u" => Some(typst_pdf::PdfStandard::A_2u),
+                    "a-2a" => Some(typst_pdf::PdfStandard::A_2a),
+                    "a-3b" => Some(typst_pdf::PdfStandard::A_3b),
+                    "a-3u" => Some(typst_pdf::PdfStandard::A_3u),
+                    "a-3a" => Some(typst_pdf::PdfStandard::A_3a),
+                    "a-4" => Some(typst_pdf::PdfStandard::A_4),
+                    "a-4f" => Some(typst_pdf::PdfStandard::A_4f),
+                    "a-4e" => Some(typst_pdf::PdfStandard::A_4e),
+                    _ => None,
+                };
+                if let Some(std) = parsed {
+                    standards.push(std);
+                } else {
+                    return CompileResult {
+                        buffers: ptr::null_mut(),
+                        buffers_len: 0,
+                        warnings: ptr::null_mut(),
+                        warnings_len: 0,
+                        error: CString::new(format!("Invalid PDF standard: {}", s)).unwrap().into_raw(),
+                    };
+                }
+            }
+        }
+    }
+
+    match compile_inner(&mut compiler.0, format_str, ppi, &standards) {
         Ok((buffers, warnings)) => {
             let mut c_buffers: Vec<Buffer> = buffers
                 .into_iter()

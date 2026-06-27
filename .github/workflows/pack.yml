@@ -13,15 +13,18 @@ permissions:
 jobs:
   pack:
     runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.version.outputs.version }}
     env:
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Compute package version
+        id: version
         shell: bash
         run: |
           set -euo pipefail
@@ -39,6 +42,7 @@ jobs:
           echo "Branch: ${branch:-unknown}"
           echo "Using package version: $package_version"
           echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
 
       - name: Build package
         uses: ./.github/actions/build-pack
@@ -54,3 +58,73 @@ jobs:
         with:
           name: typstsharp-${{ env.PACKAGE_VERSION }}
           path: artifacts
+
+  test-package:
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: Ubuntu
+            os: ubuntu-latest
+          - name: Alpine (musl)
+            os: ubuntu-latest
+            test_type: docker-alpine
+          - name: Fedora (new glibc)
+            os: ubuntu-latest
+            test_type: docker-fedora
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: typstsharp-${{ needs.pack.outputs.package_version }}
+          path: artifacts
+
+      - name: Install .NET SDK
+        if: matrix.test_type == ''
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.x
+
+      - name: Run tests (Windows / Ubuntu)
+        if: matrix.test_type == ''
+        shell: bash
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: |
+          dotnet nuget add source "${{ github.workspace }}/artifacts" --name local-artifacts
+          dotnet nuget locals all --clear
+          dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
+          dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+
+      - name: Run tests (Alpine musl)
+        if: matrix.test_type == 'docker-alpine'
+        shell: bash
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace mcr.microsoft.com/dotnet/sdk:10.0-alpine sh -c "
+            dotnet nuget add source /workspace/artifacts --name local-artifacts
+            dotnet nuget locals all --clear
+            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
+            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+          "
+
+      - name: Run tests (Fedora)
+        if: matrix.test_type == 'docker-fedora'
+        shell: bash
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace fedora:40 sh -c "
+            dnf install -y curl tar icu
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --install-dir /usr/share/dotnet
+            ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet
+            dotnet nuget add source /workspace/artifacts --name local-artifacts
+            dotnet nuget locals all --clear
+            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
+            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+          "

@@ -1,19 +1,16 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use ecow::eco_format;
-use chrono::{DateTime, Datelike, Local};
 use typst::diag::{FileError, FileResult, StrResult};
-use typst::foundations::{Bytes, Datetime};
-use typst::syntax::{FileId, Source, VirtualPath};
+use typst::foundations::{Bytes, Datetime, Duration};
+use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
-use typst_kit::{fonts::FontSearcher, package::PackageStorage};
-
-use crate::download::SilentDownload;
+use typst_kit::packages::{FsPackages, SystemPackages, UniversePackages};
 
 /// A world that provides access to the operating system.
 pub struct SystemWorld {
@@ -26,14 +23,14 @@ pub struct SystemWorld {
     /// Metadata about discovered fonts.
     book: LazyHash<FontBook>,
     /// Locations of and storage for lazily loaded fonts.
-    fonts: Arc<typst_kit::fonts::Fonts>,
+    fonts: Arc<typst_kit::fonts::FontStore>,
     /// Maps file ids to source files and buffers.
     slots: Mutex<HashMap<FileId, FileSlot>>,
     /// Holds information about where packages are stored.
-    package_storage: PackageStorage,
+    packages: SystemPackages,
     /// The current datetime if requested. This is stored here to ensure it is
     /// always the same within one compilation. Reset between compilations.
-    now: OnceLock<DateTime<Local>>,
+    now: typst_kit::datetime::Time,
 }
 
 impl World for SystemWorld {
@@ -50,30 +47,19 @@ impl World for SystemWorld {
     }
 
     fn source(&self, id: FileId) -> FileResult<Source> {
-        self.slot(id, |slot| slot.source(&self.root, &self.package_storage))
+        self.slot(id, |slot| slot.source(&self.root, &self.packages))
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
-        self.slot(id, |slot| slot.file(&self.root, &self.package_storage))
+        self.slot(id, |slot| slot.file(&self.root, &self.packages))
     }
 
     fn font(&self, index: usize) -> Option<Font> {
-        self.fonts.fonts[index].get()
+        self.fonts.font(index)
     }
 
-    fn today(&self, offset: Option<i64>) -> Option<Datetime> {
-        let now = self.now.get_or_init(chrono::Local::now);
-
-        let naive = match offset {
-            None => now.naive_local(),
-            Some(o) => now.naive_utc() + chrono::Duration::hours(o),
-        };
-
-        Datetime::from_ymd(
-            naive.year(),
-            naive.month().try_into().ok()?,
-            naive.day().try_into().ok()?,
-        )
+    fn today(&self, offset: Option<Duration>) -> Option<Datetime> {
+        self.now.today(offset)
     }
 }
 
@@ -87,9 +73,17 @@ impl SystemWorld {
         input_content: Option<String>,
         include_system_fonts: bool,
     ) -> StrResult<Self> {
-        let mut font_searcher = FontSearcher::new();
-        font_searcher.include_system_fonts(include_system_fonts);
-        let fonts = font_searcher.search_with(font_paths);
+        let mut fonts = typst_kit::fonts::FontStore::new();
+
+        if include_system_fonts {
+            fonts.extend(typst_kit::fonts::system());
+        }
+
+        fonts.extend(typst_kit::fonts::embedded());
+
+        for path in font_paths {
+            fonts.extend(typst_kit::fonts::scan(path));
+        }
 
         // Resolve the main file path relative to the root
         // If the input path is absolute, try to make it relative to the root.
@@ -102,9 +96,12 @@ impl SystemWorld {
             } else {
                 &path
             };
-            FileId::new(None, VirtualPath::new(relative_path))
+            let relative_str = relative_path.to_str().ok_or_else(|| {
+                eco_format!("input file path must be valid UTF-8")
+            })?;
+            RootedPath::new(VirtualRoot::Project, VirtualPath::new(relative_str).unwrap()).intern()
         } else {
-            FileId::new_fake(VirtualPath::new("<main>"))
+            FileId::unique(RootedPath::new(VirtualRoot::Project, VirtualPath::new("<main>").unwrap()))
         };
 
         let mut slots = HashMap::new();
@@ -114,20 +111,26 @@ impl SystemWorld {
             slots.insert(main_id, main_slot);
         }
 
+        let book = fonts.book().clone();
+
         Ok(Self {
             root,
             main: main_id,
             library: LazyHash::new(
                 typst::Library::builder()
-                    .with_features([typst::Feature::Html].into_iter().collect())
+                    .with_features([typst::Feature::Html].into_iter().collect::<typst::Features>())
                     .with_inputs(inputs)
                     .build(),
             ),
-            book: LazyHash::new(fonts.book.clone()),
+            book,
             fonts: Arc::new(fonts),
             slots: Mutex::new(slots),
-            package_storage: PackageStorage::new(None, package_path, crate::download::downloader()),
-            now: OnceLock::new(),
+            packages: SystemPackages::from_parts(
+                package_path.map(FsPackages::new).or_else(FsPackages::system_data),
+                FsPackages::system_cache(),
+                UniversePackages::new(crate::download::downloader()),
+            ),
+            now: typst_kit::datetime::Time::system(),
         })
     }
 
@@ -137,11 +140,16 @@ impl SystemWorld {
     pub fn set_inputs(&mut self, inputs: typst::foundations::Dict) -> StrResult<()> {
         self.library = LazyHash::new(
             typst::Library::builder()
-                .with_features([typst::Feature::Html].into_iter().collect())
+                .with_features([typst::Feature::Html].into_iter().collect::<typst::Features>())
                 .with_inputs(inputs)
                 .build(),
         );
         Ok(())
+    }
+
+    /// Resets the cached date/time between compilations.
+    pub fn reset_time(&mut self) {
+        self.now.reset();
     }
 
     fn slot<F, T>(&self, id: FileId, f: F) -> T
@@ -171,11 +179,11 @@ impl FileSlot {
     fn source(
         &mut self,
         project_root: &Path,
-        package_storage: &PackageStorage,
+        packages: &SystemPackages,
     ) -> FileResult<Source> {
         let id = self.id;
         self.source.get_or_init(
-            || system_path(project_root, id, package_storage),
+            || system_path(project_root, id, packages),
             |data, prev| {
                 let text = decode_utf8(&data)?;
                 if let Some(mut prev) = prev {
@@ -188,23 +196,27 @@ impl FileSlot {
         )
     }
 
-    fn file(&mut self, project_root: &Path, package_storage: &PackageStorage) -> FileResult<Bytes> {
+    fn file(&mut self, project_root: &Path, packages: &SystemPackages) -> FileResult<Bytes> {
         let id = self.id;
         self.file.get_or_init(
-            || system_path(project_root, id, package_storage),
+            || system_path(project_root, id, packages),
             |data, _| Ok(Bytes::new(data)),
         )
     }
 }
 
-fn system_path(root: &Path, id: FileId, package_storage: &PackageStorage) -> FileResult<PathBuf> {
-    let buf;
-    let mut root = root;
-    if let Some(spec) = id.package() {
-        buf = package_storage.prepare_package(spec, &mut SilentDownload(&spec))?;
-        root = &buf;
+fn system_path(
+    root: &Path,
+    id: FileId,
+    packages: &SystemPackages,
+) -> FileResult<PathBuf> {
+    match id.root() {
+        VirtualRoot::Project => Ok(id.vpath().realize(root)),
+        VirtualRoot::Package(spec) => {
+            let package_root = packages.obtain(spec)?;
+            Ok(package_root.resolve(id.vpath()))
+        }
     }
-    id.vpath().resolve(root).ok_or(FileError::AccessDenied)
 }
 
 struct SlotCell<T> {

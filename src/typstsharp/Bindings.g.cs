@@ -29,7 +29,7 @@ namespace CsBindgen
         internal static extern bool set_sys_inputs(Compiler* compiler, byte* sys_inputs);
 
         [DllImport(__DllName, EntryPoint = "compile", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern CompileResult compile(Compiler* compiler);
+        internal static extern CompileResult compile(Compiler* compiler, byte* format_ptr, float ppi, byte* pdf_standards);
 
         [DllImport(__DllName, EntryPoint = "free_compile_result", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void free_compile_result(CompileResult result);

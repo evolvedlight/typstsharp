@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>net8;net9;net10.0</TargetFrameworks>
@@ -7,7 +7,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <PackageId>typstsharp</PackageId>
-    <Version>0.0.1-typst0.14.0</Version>
+    <Version>0.0.1-typst0.15.0</Version>
     <Authors>evolvedlight</Authors>
     <Description>A .NET wrapper for the Typst typesetting system.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -64,11 +64,53 @@
     <Folder Include="rust\native\" />
   </ItemGroup>
 
-  <Target Name="BuildRust" BeforeTargets="PrepareForBuild">
+  <Target Name="DetectMusl" BeforeTargets="BuildRust" Condition="'$(OS)' == 'Unix'">
+    <Exec Command="which x86_64-linux-musl-gcc" IgnoreExitCode="true" ConsoleToMSBuild="true">
+      <Output TaskParameter="ExitCode" PropertyName="MuslExitCode" />
+      <Output TaskParameter="ConsoleOutput" PropertyName="MuslPath" />
+    </Exec>
+    <PropertyGroup>
+      <HasMusl>false</HasMusl>
+      <HasMusl Condition="'$(MuslExitCode)' == '0'">true</HasMusl>
+    </PropertyGroup>
+    <Message Text="musl-gcc detection result: exit code $(MuslExitCode), path: '$(MuslPath)'. HasMusl: $(HasMusl)" Importance="high" />
+
+    <!-- If musl-gcc is not available, switch target triple for linux-x64 from musl to gnu -->
+    <ItemGroup Condition="'$(HasMusl)' == 'false'">
+      <RustRuntime Update="@(RustRuntime)" Condition="'%(Identity)' == 'linux-x64'">
+        <TargetTriple>x86_64-unknown-linux-gnu</TargetTriple>
+        <CargoOutput>$([System.IO.Path]::Combine('$(RustCoreDir)','target','x86_64-unknown-linux-gnu','release','libtypst_core.so'))</CargoOutput>
+      </RustRuntime>
+    </ItemGroup>
+
+    <!-- Check if mingw-w64 is available for cross-compiling win-x64 on Linux -->
+    <Exec Command="which x86_64-w64-mingw32-gcc" IgnoreExitCode="true" ConsoleToMSBuild="true">
+      <Output TaskParameter="ExitCode" PropertyName="MingwExitCode" />
+    </Exec>
+    <PropertyGroup>
+      <HasMingw>false</HasMingw>
+      <HasMingw Condition="'$(MingwExitCode)' == '0'">true</HasMingw>
+    </PropertyGroup>
+
+    <Warning Text="MinGW toolchain (x86_64-w64-mingw32-gcc) not found. Skipping build for win-x64 target." Condition="'$(HasMingw)' == 'false' and $([System.String]::Copy(';$(RustTargets);').Contains(';win-x64;'))" />
+
+    <!-- If mingw is not available, remove win-x64 from RustRuntime -->
+    <ItemGroup Condition="'$(HasMingw)' == 'false'">
+      <RustRuntime Remove="win-x64" />
+    </ItemGroup>
+
+    <!-- Re-evaluate RustTargetsToBuild with the updated triple/runtimes -->
+    <ItemGroup>
+      <RustTargetsToBuild Remove="@(RustTargetsToBuild)" />
+      <RustTargetsToBuild Include="@(RustRuntime)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="BuildRust" BeforeTargets="PrepareForBuild" DependsOnTargets="DetectMusl">
     <Message Text="Building typst_core for %(RustTargetsToBuild.Identity) (%(RustTargetsToBuild.TargetTriple))" Importance="high" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
     <Exec Command="rustup target add %(RustTargetsToBuild.TargetTriple)" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
     <Exec Command="CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc cargo build --release --manifest-path ../typst_core/Cargo.toml --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="'%(RustTargetsToBuild.TargetTriple)' == 'x86_64-unknown-linux-musl' and $([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
-    <Exec Command="x86_64-linux-musl-gcc -shared -o $(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.so -Wl,--whole-archive $(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.a -Wl,--no-whole-archive -static-libgcc -Wl,-Bstatic -lc" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="'%(RustTargetsToBuild.TargetTriple)' == 'x86_64-unknown-linux-musl' and $([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
+    <Exec Command="x86_64-linux-musl-gcc -shared -o $(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.so -Wl,--whole-archive $(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.a -Wl,--no-whole-archive -static-libgcc -Wl,-Bstatic -lc -Wl,-z,noexecstack" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="'%(RustTargetsToBuild.TargetTriple)' == 'x86_64-unknown-linux-musl' and $([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
     <Exec Command="cargo build --release --manifest-path ../typst_core/Cargo.toml --target %(RustTargetsToBuild.TargetTriple)" WorkingDirectory="$(MSBuildThisFileDirectory)" Condition="'%(RustTargetsToBuild.TargetTriple)' != 'x86_64-unknown-linux-musl' and $([System.String]::Copy(';$(RustTargets);').Contains(';%(RustTargetsToBuild.Identity);'))" />
   </Target>
 
