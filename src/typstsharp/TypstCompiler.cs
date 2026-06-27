@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -123,50 +123,62 @@ public unsafe class TypstCompiler : IDisposable
     /// </summary>
     /// <returns>A <see cref="CompileOutcome"/> containing the compiled document buffers and any warnings.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the compilation fails, with the error message from Typst.</exception>
-    public CompileOutcome Compile()
+    public CompileOutcome Compile(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
     {
         EnsureNotDisposed();
 
-        var native = CsBindgen.NativeMethods.compile(_compiler);
+        IntPtr formatPtr = Marshal.StringToCoTaskMemUTF8(format);
+        string standardsStr = pdfStandards != null ? string.Join(",", pdfStandards) : "";
+        IntPtr standardsPtr = Marshal.StringToCoTaskMemUTF8(standardsStr);
+
         try
         {
-            if (native.error != null)
+            var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, (byte*)standardsPtr);
+            try
             {
-                var error = Marshal.PtrToStringUTF8((nint)native.error) ?? "Unknown Typst error";
-                throw new InvalidOperationException(error);
-            }
-
-            var managedBuffers = new List<byte[]>((int)native.buffers_len);
-            if (native.buffers != null)
-            {
-                for (nuint i = 0; i < native.buffers_len; i++)
+                if (native.error != null)
                 {
-                    var buffer = native.buffers[i];
-                    var managed = new byte[checked((int)buffer.len)];
-                    if (buffer.len > 0 && buffer.ptr != null)
+                    var error = Marshal.PtrToStringUTF8((nint)native.error) ?? "Unknown Typst error";
+                    throw new InvalidOperationException(error);
+                }
+
+                var managedBuffers = new List<byte[]>((int)native.buffers_len);
+                if (native.buffers != null)
+                {
+                    for (nuint i = 0; i < native.buffers_len; i++)
                     {
-                        Marshal.Copy((IntPtr)buffer.ptr, managed, 0, managed.Length);
+                        var buffer = native.buffers[i];
+                        var managed = new byte[checked((int)buffer.len)];
+                        if (buffer.len > 0 && buffer.ptr != null)
+                        {
+                            Marshal.Copy((IntPtr)buffer.ptr, managed, 0, managed.Length);
+                        }
+                        managedBuffers.Add(managed);
                     }
-                    managedBuffers.Add(managed);
                 }
-            }
 
-            var managedWarnings = new List<string>((int)native.warnings_len);
-            if (native.warnings != null)
-            {
-                for (nuint i = 0; i < native.warnings_len; i++)
+                var managedWarnings = new List<string>((int)native.warnings_len);
+                if (native.warnings != null)
                 {
-                    var warning = native.warnings[i];
-                    managedWarnings.Add(Marshal.PtrToStringUTF8((nint)warning.message) ?? string.Empty);
+                    for (nuint i = 0; i < native.warnings_len; i++)
+                    {
+                        var warning = native.warnings[i];
+                        managedWarnings.Add(Marshal.PtrToStringUTF8((nint)warning.message) ?? string.Empty);
+                    }
                 }
-            }
 
-            return new CompileOutcome(managedBuffers, managedWarnings);
+                return new CompileOutcome(managedBuffers, managedWarnings);
+            }
+            finally
+            {
+                CsBindgen.NativeMethods.free_compile_result(native);
+                CsBindgen.NativeMethods.reset_world();
+            }
         }
         finally
         {
-            CsBindgen.NativeMethods.free_compile_result(native);
-            CsBindgen.NativeMethods.reset_world();
+            if (formatPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(formatPtr);
+            if (standardsPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(standardsPtr);
         }
     }
 
@@ -178,9 +190,9 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="format">The output format (e.g., "pdf"). This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
     /// <param name="ppi">The pixels per inch for the output. This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
     /// <returns>A tuple containing a list of byte arrays for each page and a list of warnings.</returns>
-    public (List<byte[]> pages, List<TypstWarning> warnings) Compile(string format = "pdf", float ppi = 144.0f)
+    public (List<byte[]> pages, List<TypstWarning> warnings) CompileToPages(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
     {
-        var outcome = Compile();
+        var outcome = Compile(format, ppi, pdfStandards);
         var pages = new List<byte[]>(outcome.Buffers);
         var warnings = outcome.Warnings
             .Select(message => new TypstWarning(message))
@@ -194,9 +206,9 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="outputFile">The path for the output file. If the document has multiple pages, a page number will be appended to the file name for each page.</param>
     /// <param name="format">The output format (e.g., "pdf"). This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
     /// <param name="ppi">The pixels per inch for the output. This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
-    public void Compile(string outputFile, string format, float ppi = 144.0f)
+    public void Compile(string outputFile, string format, float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
     {
-        var (pages, _) = Compile(format, ppi);
+        var (pages, _) = CompileToPages(format, ppi, pdfStandards);
         if (pages.Count == 1)
         {
             File.WriteAllBytes(outputFile, pages[0]);
