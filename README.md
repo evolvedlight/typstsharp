@@ -99,7 +99,7 @@ You can easily use this inside of an ASP.Net Server (just ensure you lazy load a
 
 ```pwsh
 # from the repository root
- dotnet build typstsharp.sln
+ dotnet build typstsharp.slnx
 ```
 
 The build will automatically:
