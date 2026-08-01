@@ -211,10 +211,10 @@ fn system_path(
     packages: &SystemPackages,
 ) -> FileResult<PathBuf> {
     match id.root() {
-        VirtualRoot::Project => Ok(id.vpath().realize(root)),
+        VirtualRoot::Project => id.vpath().realize(root).map_err(|_| FileError::AccessDenied),
         VirtualRoot::Package(spec) => {
             let package_root = packages.obtain(spec)?;
-            Ok(package_root.resolve(id.vpath()))
+            package_root.resolve(id.vpath())
         }
     }
 }

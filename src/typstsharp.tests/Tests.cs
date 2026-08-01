@@ -11,8 +11,6 @@ public class Tests
     [Test]
     public async Task BasicSource()
     {
-        Console.WriteLine("This is a basic test");
-
         var compiler = TypstCompiler.FromSource("Hello World 2");
         var result = compiler.Compile().Buffers[0];
         var plainText = GetPlainText(result);
