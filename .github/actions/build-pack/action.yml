@@ -70,4 +70,4 @@ runs:
         if [ -n "${{ inputs.package-version }}" ]; then
           version_arg="/p:Version=${{ inputs.package-version }}"
         fi
-        dotnet pack src/typstsharp/typstsharp.csproj -c Release -o "${{ inputs.output-directory }}" $version_arg
+        dotnet pack src/typstsharp/typstsharp.csproj -m:1 -c Release -o "${{ inputs.output-directory }}" $version_arg
