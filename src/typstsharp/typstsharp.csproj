@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU5118</NoWarn>
 
     <PackageId>typstsharp</PackageId>
     <Version>0.0.1-typst0.15.0</Version>
