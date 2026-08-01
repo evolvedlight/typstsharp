@@ -47,8 +47,22 @@ runs:
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: ${{ inputs.rust-version }}
-        cache-workspaces: src/typst_core
-        rust-src-dir: src/typst_core
+        cache: false
+
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.5
+
+    - name: Cache Cargo registry
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src/typst_core
+        cache-targets: false
+
+    - name: Configure sccache
+      shell: bash
+      run: |
+        echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+        echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
 
     - name: Add Rust cross-compilation targets
       shell: bash
