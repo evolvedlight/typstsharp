@@ -18,6 +18,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <HostRustRuntime Condition="'$(HostRustRuntime)' == '' and '$(NETCoreSdkPortableRuntimeIdentifier)' != ''">$(NETCoreSdkPortableRuntimeIdentifier)</HostRustRuntime>
     <HostRustRuntime Condition="'$(HostRustRuntime)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</HostRustRuntime>
     <HostRustRuntime Condition="'$(HostRustRuntime)' == ''">win-x64</HostRustRuntime>
     <DefaultRustTargets>linux-x64;win-x64;win-arm64</DefaultRustTargets>
