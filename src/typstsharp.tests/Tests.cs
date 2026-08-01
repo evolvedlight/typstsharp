@@ -11,12 +11,11 @@ public class Tests
     [Test]
     public async Task BasicSource()
     {
-        Console.WriteLine("This is a basic test");
-
         var compiler = TypstCompiler.FromSource("Hello World 2");
         var result = compiler.Compile().Buffers[0];
         var plainText = GetPlainText(result);
-        await Assert.That(plainText).Contains("World 2");
+        await Assert.That(plainText).Contain-
+        s("World 2");
     }
 
     [Test]
@@ -29,7 +28,28 @@ public class Tests
         await Assert.That(plainText).Contains("Hello world’s");
     }
 
-    private string GetPlainText(byte[] pdf)
+    [Test]
+    public async Task BasicExceptions()
+    {
+        var compiler = TypstCompiler.FromSource("This is not a valid document: # what?");
+        var result = compiler.Compile().Buffers[0];
+        var plainText = GetPlainText(result);
+        // TODO
+    }
+
+    [Test]
+    public async Task TwoExceptions()
+    {
+        var content = """This is not a valid document: # what?
+
+As a test - this should be able to have a second error, as you can't use dollars here: $50"""
+        var compiler = TypstCompiler.FromSource(content);
+        var result = compiler.Compile().Buffers[0];
+        var plainText = GetPlainText(result);
+        // TODO
+    }
+
+    private string GetPlainText(byte[] pdf)+
     {
         var sb = new StringBuilder();
         using (PdfDocument document = PdfDocument.Open(pdf))
