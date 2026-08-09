@@ -166,21 +166,21 @@ pub extern "C" fn set_sys_inputs(compiler: *mut Compiler, sys_inputs: *const c_c
 }
 
 fn compile_inner(
-    world: &mut Compiler,
+    world: &mut SystemWorld,
     format: &str,
     ppi: f32,
     standards: &[typst_pdf::PdfStandard],
 ) -> StrResult<(Vec<Vec<u8>>, Vec<SourceDiagnostic>)> {
-    world.0.reset_time();
-    let (document, warnings) = match typst::compile::<PagedDocument>(&world.0) {
+    world.reset_time();
+    let (document, warnings) = match typst::compile::<PagedDocument>(world) {
         Warned { output, warnings } => {
             let doc = output.map_err(|errors| {
                 let message = errors
                     .iter()
                     .map(|error| {
                         let location = error.span.id().and_then(|id| {
-                            let source = world.0.source(id).ok()?;
-                            let range = world.0.range(error.span)?;
+                            let source = world.source(id).ok()?;
+                            let range = world.range(error.span)?;
                             let (line, column) =
                                 source.lines().byte_to_line_column(range.start)?;
                             let text = source.text().get(range.clone())?.to_string();
@@ -285,7 +285,7 @@ pub extern "C" fn compile(
         }
     }
 
-    match compile_inner(&mut *compiler, format_str, ppi, &standards) {
+    match compile_inner(&mut compiler.0, format_str, ppi, &standards) {
         Ok((buffers, warnings)) => {
             let mut c_buffers: Vec<Buffer> = buffers
                 .into_iter()
