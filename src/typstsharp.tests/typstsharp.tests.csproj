@@ -10,8 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="PdfPig" Version="0.1.13" />
-    <PackageReference Include="TUnit" Version="1.12.102" />
+    <PackageReference Include="PdfPig" Version="0.1.15" />
+    <PackageReference Include="TUnit" Version="1.64.6" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UsePackagedLibrary)' != 'true'">

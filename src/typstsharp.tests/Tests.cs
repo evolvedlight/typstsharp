@@ -2,7 +2,6 @@
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
-using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
 
 namespace typstsharp.tests;
 
@@ -29,7 +28,42 @@ public class Tests
         await Assert.That(plainText).Contains("Hello world’s");
     }
 
-    private string GetPlainText(byte[] pdf)
+    [Test]
+    public async Task BasicException()
+    {
+        const string source = "This is not a valid document: # what?";
+        var regexMatcher = StringMatcher.AsRegex(
+            @"^expected expression \(line 1, column \d+: `[^`]*`\)\r?");
+
+        await Assert.That(() =>
+            {
+                using var compiler = TypstCompiler.FromSource(source);
+                _ = compiler.Compile();
+            }).Throws<InvalidOperationException>()
+            .WithMessageMatching(regexMatcher);
+    }
+
+    [Test]
+    public async Task BasicExceptionWithTwoErrors()
+    {
+        const string content = """
+                               This is not a valid document: # what?
+
+                               As a test - this should be able to have a second error, as you can't use dollars here: $50
+                               """;
+        var regexMatcher = StringMatcher.AsRegex(
+            @"^expected expression \(line 1, column \d+: `[^`]*`\)\r?\n" +
+            @"unclosed delimiter \(line 3, column \d+: `[^`]*`\)$");
+        
+        await Assert.That(() =>
+            {
+                using var compiler = TypstCompiler.FromSource(content);
+                _ = compiler.Compile();
+            }).Throws<InvalidOperationException>()
+            .WithMessageMatching(regexMatcher);
+    }
+
+    private static string GetPlainText(byte[] pdf)
     {
         var sb = new StringBuilder();
         using (PdfDocument document = PdfDocument.Open(pdf))
@@ -37,7 +71,6 @@ public class Tests
             foreach (Page page in document.GetPages())
             {
                 string text = ContentOrderTextExtractor.GetText(page);
-                IEnumerable<Word> words = page.GetWords(NearestNeighbourWordExtractor.Instance);
                 sb.AppendLine(text);
             }
         }
