@@ -10,6 +10,7 @@ mod world;
 use ecow::EcoString;
 use typst::diag::{SourceDiagnostic, StrResult, Warned};
 use typst::foundations::Dict;
+use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
 use world::SystemWorld;
 
@@ -165,15 +166,58 @@ pub extern "C" fn set_sys_inputs(compiler: *mut Compiler, sys_inputs: *const c_c
 }
 
 fn compile_inner(
-    world: &mut SystemWorld,
+    world: &mut Compiler,
     format: &str,
     ppi: f32,
     standards: &[typst_pdf::PdfStandard],
 ) -> StrResult<(Vec<Vec<u8>>, Vec<SourceDiagnostic>)> {
-    world.reset_time();
-    let (document, warnings) = match typst::compile::<PagedDocument>(world) {
+    world.0.reset_time();
+    let (document, warnings) = match typst::compile::<PagedDocument>(&world.0) {
         Warned { output, warnings } => {
-            let doc = output.map_err(|errors| EcoString::from(format!("{:?}", errors)))?;
+            let doc = output.map_err(|errors| {
+                let message = errors
+                    .iter()
+                    .map(|error| {
+                        let location = error.span.id().and_then(|id| {
+                            let source = world.0.source(id).ok()?;
+                            let range = world.0.range(error.span)?;
+                            let (line, column) =
+                                source.lines().byte_to_line_column(range.start)?;
+                            let text = source.text().get(range.clone())?.to_string();
+
+                            Some(format!(
+                                "line {}, column {}: `{}`",
+                                line + 1,
+                                column + 1,
+                                text
+                            ))
+                        });
+
+                        let hints = error
+                            .hints
+                            .iter()
+                            .map(|hint| hint.v.as_str())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+
+                        match (location, hints.is_empty()) {
+                            (Some(location), false) => {
+                                format!("{} ({}; hint: {})", error.message, location, hints)
+                            }
+                            (Some(location), true) => {
+                                format!("{} ({})", error.message, location)
+                            }
+                            (None, false) => {
+                                format!("{} (hint: {})", error.message, hints)
+                            }
+                            (None, true) => error.message.to_string(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                EcoString::from(message)
+            })?;
             (doc, warnings.to_vec())
         }
     };
@@ -241,7 +285,7 @@ pub extern "C" fn compile(
         }
     }
 
-    match compile_inner(&mut compiler.0, format_str, ppi, &standards) {
+    match compile_inner(&mut *compiler, format_str, ppi, &standards) {
         Ok((buffers, warnings)) => {
             let mut c_buffers: Vec<Buffer> = buffers
                 .into_iter()
