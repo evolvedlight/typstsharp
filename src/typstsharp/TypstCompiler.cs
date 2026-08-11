@@ -1,19 +1,19 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace typstsharp;
 
-public record Fonts(
+public sealed record Fonts(
     bool IncludeSystemFonts = true,
     IEnumerable<string>? FontPaths = null
 );
 
 public unsafe class TypstCompiler : IDisposable
 {
-    public static string EmptyDictionaryJson => "{}";
+    private const string EmptyDictionaryJson = "{}";
     private CsBindgen.Compiler* _compiler;
     private bool _disposed = false;
+
     private static readonly JsonSerializerOptions sourceGenOptions = new()
     {
         TypeInfoResolver = SourceGenerationContext.Default
@@ -25,8 +25,10 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="inputPath">The path to the Typst source file to compile.</param>
     /// <param name="fonts">Font settings, including system fonts and custom font paths.</param>
     /// <param name="sysInputs">Initial system inputs (legacy, prefer SetSysInputs).</param>
+    /// <param name="root">Root directory.</param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
-    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
+    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null,
+        string? root = null, string? packagePath = null)
         : this(inputPath, null, fonts, sysInputs, root, packagePath)
     {
     }
@@ -39,7 +41,8 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="sysInputs">System inputs.</param>
     /// <param name="root">Root directory.</param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
+    public static TypstCompiler FromSource(string source, Fonts? fonts = null,
+        Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
     {
         return new TypstCompiler(null, source, fonts, sysInputs, root, packagePath);
     }
@@ -52,69 +55,58 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="sysInputs">System inputs.</param>
     /// <param name="root">Root directory.</param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
+    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null,
+        string? root = null, string? packagePath = null)
     {
         return new TypstCompiler(path, null, fonts, sysInputs, root, packagePath);
     }
 
-    
-
-    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root, string? packagePath = null)
+    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs,
+        string? root, string? packagePath = null)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? [];
         bool ignoreSystemFonts = !fonts.IncludeSystemFonts;
 
-        var inputPathPtr = inputPath != null ? Marshal.StringToCoTaskMemUTF8(inputPath) : IntPtr.Zero;
-        var inputSourcePtr = inputSource != null ? Marshal.StringToCoTaskMemUTF8(inputSource) : IntPtr.Zero;
-        
-        IntPtr rootPtr = IntPtr.Zero;
-        if (!string.IsNullOrWhiteSpace(root))
-        {
-            rootPtr = Marshal.StringToCoTaskMemUTF8(root);
-        }
+        using var nativeStringManager = new NativeStringManager();
+        var inputPathPtr = nativeStringManager.GetNativeUtf8FromString(inputPath);
+        var inputSourcePtr = nativeStringManager.GetNativeUtf8FromString(inputSource);
 
-        var fontPathsList = fontPaths.ToList();
+        var rootPtr = !string.IsNullOrWhiteSpace(root)
+            ? nativeStringManager.GetNativeUtf8FromString(root)
+            : IntPtr.Zero;
+
+        var fontPathsList = fontPaths as IList<string> ?? fontPaths.ToList();
         var fontPathPtrs = new IntPtr[fontPathsList.Count];
         for (int i = 0; i < fontPathsList.Count; i++)
         {
-            fontPathPtrs[i] = Marshal.StringToCoTaskMemUTF8(fontPathsList[i]);
+            fontPathPtrs[i] = nativeStringManager.GetNativeUtf8FromString(fontPathsList[i]);
         }
 
-        var packagePathPtr = packagePath != null ? Marshal.StringToCoTaskMemUTF8(packagePath) : IntPtr.Zero;
+        var packagePathPtr = nativeStringManager.GetNativeUtf8FromString(packagePath);
 
-        var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
-        var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
+        var sysInputsJson = sysInputs == null
+            ? EmptyDictionaryJson
+            : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
+        var sysInputsPtr = nativeStringManager.GetNativeUtf8FromString(sysInputsJson);
 
-        try
+        fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
         {
-            fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
-            {
-                IntPtr* fontPathsPtr = fontPathsList.Count == 0 ? null : fontPathsRawPtr;
-                _compiler = CsBindgen.NativeMethods.create_compiler(
-                    (byte*)rootPtr, 
-                    (byte*)inputPathPtr, 
-                    (byte*)inputSourcePtr, 
-                    (byte**)fontPathsPtr, 
-                    (nuint)fontPathsList.Count, 
-                    (byte*)packagePathPtr,
-                    (byte*)sysInputsPtr, 
-                    ignoreSystemFonts);
-            }
-
-            if (_compiler == null)
-            {
-                throw new Exception("Failed to create Typst compiler.");
-            }
+            IntPtr* fontPathsPtr = fontPathPtrs.Length == 0 ? null : fontPathsRawPtr;
+            _compiler = CsBindgen.NativeMethods.create_compiler(
+                (byte*)rootPtr,
+                (byte*)inputPathPtr,
+                (byte*)inputSourcePtr,
+                (byte**)fontPathsPtr,
+                (nuint)fontPathPtrs.Length,
+                (byte*)packagePathPtr,
+                (byte*)sysInputsPtr,
+                ignoreSystemFonts);
         }
-        finally
+
+        if (_compiler == null)
         {
-            if (rootPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(rootPtr);
-            if (inputPathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputPathPtr);
-            if (inputSourcePtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputSourcePtr);
-            foreach (var ptr in fontPathPtrs) Marshal.FreeCoTaskMem(ptr);
-            if (packagePathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(packagePathPtr);
-            Marshal.FreeCoTaskMem(sysInputsPtr);
+            throw new Exception("Failed to create Typst compiler.");
         }
     }
 
@@ -127,58 +119,52 @@ public unsafe class TypstCompiler : IDisposable
     {
         EnsureNotDisposed();
 
-        IntPtr formatPtr = Marshal.StringToCoTaskMemUTF8(format);
+        using var nativeStringManager = new NativeStringManager();
+        IntPtr formatPtr = nativeStringManager.GetNativeUtf8FromString(format);
         string standardsStr = pdfStandards != null ? string.Join(",", pdfStandards) : "";
-        IntPtr standardsPtr = Marshal.StringToCoTaskMemUTF8(standardsStr);
+        IntPtr standardsPtr = nativeStringManager.GetNativeUtf8FromString(standardsStr);
 
+        var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, (byte*)standardsPtr);
         try
         {
-            var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, (byte*)standardsPtr);
-            try
+            if (native.error != null)
             {
-                if (native.error != null)
-                {
-                    var error = Marshal.PtrToStringUTF8((nint)native.error) ?? "Unknown Typst error";
-                    throw new InvalidOperationException(error);
-                }
-
-                var managedBuffers = new List<byte[]>((int)native.buffers_len);
-                if (native.buffers != null)
-                {
-                    for (nuint i = 0; i < native.buffers_len; i++)
-                    {
-                        var buffer = native.buffers[i];
-                        var managed = new byte[checked((int)buffer.len)];
-                        if (buffer.len > 0 && buffer.ptr != null)
-                        {
-                            Marshal.Copy((IntPtr)buffer.ptr, managed, 0, managed.Length);
-                        }
-                        managedBuffers.Add(managed);
-                    }
-                }
-
-                var managedWarnings = new List<string>((int)native.warnings_len);
-                if (native.warnings != null)
-                {
-                    for (nuint i = 0; i < native.warnings_len; i++)
-                    {
-                        var warning = native.warnings[i];
-                        managedWarnings.Add(Marshal.PtrToStringUTF8((nint)warning.message) ?? string.Empty);
-                    }
-                }
-
-                return new CompileOutcome(managedBuffers, managedWarnings);
+                var error = Marshal.PtrToStringUTF8((nint)native.error) ?? "Unknown Typst error";
+                throw new InvalidOperationException(error);
             }
-            finally
+
+            var managedBuffers = new List<byte[]>((int)native.buffers_len);
+            if (native.buffers != null)
             {
-                CsBindgen.NativeMethods.free_compile_result(native);
-                CsBindgen.NativeMethods.reset_world();
+                for (nuint i = 0; i < native.buffers_len; i++)
+                {
+                    var buffer = native.buffers[i];
+                    var managed = new byte[checked((int)buffer.len)];
+                    if (buffer.len > 0 && buffer.ptr != null)
+                    {
+                        Marshal.Copy((IntPtr)buffer.ptr, managed, 0, managed.Length);
+                    }
+
+                    managedBuffers.Add(managed);
+                }
             }
+
+            var managedWarnings = new List<string>((int)native.warnings_len);
+            if (native.warnings != null)
+            {
+                for (nuint i = 0; i < native.warnings_len; i++)
+                {
+                    var warning = native.warnings[i];
+                    managedWarnings.Add(Marshal.PtrToStringUTF8((nint)warning.message) ?? string.Empty);
+                }
+            }
+
+            return new CompileOutcome(managedBuffers, managedWarnings);
         }
         finally
         {
-            if (formatPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(formatPtr);
-            if (standardsPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(standardsPtr);
+            CsBindgen.NativeMethods.free_compile_result(native);
+            CsBindgen.NativeMethods.reset_world();
         }
     }
 
@@ -190,7 +176,8 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="format">The output format (e.g., "pdf"). This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
     /// <param name="ppi">The pixels per inch for the output. This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
     /// <returns>A tuple containing a list of byte arrays for each page and a list of warnings.</returns>
-    public (List<byte[]> pages, List<TypstWarning> warnings) CompileToPages(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
+    public (List<byte[]> pages, List<TypstWarning> warnings) CompileToPages(string format = "pdf", float ppi = 144.0f,
+        IEnumerable<string>? pdfStandards = null)
     {
         var outcome = Compile(format, ppi, pdfStandards);
         var pages = new List<byte[]>(outcome.Buffers);
@@ -234,21 +221,16 @@ public unsafe class TypstCompiler : IDisposable
     /// <exception cref="Exception">Thrown if the inputs fail to be set in the native compiler.</exception>
     public void SetSysInputs(Dictionary<string, string> inputs)
     {
-        if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
+        EnsureNotDisposed();
 
+        using var nativeStringManager = new NativeStringManager();
         var sysInputsJson = JsonSerializer.Serialize<Dictionary<string, string>>(inputs, sourceGenOptions);
-        var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
-        try
+        var sysInputsPtr = nativeStringManager.GetNativeUtf8FromString(sysInputsJson);
+
+        var ok = CsBindgen.NativeMethods.set_sys_inputs(_compiler, (byte*)sysInputsPtr);
+        if (!ok)
         {
-            var ok = CsBindgen.NativeMethods.set_sys_inputs(_compiler, (byte*)sysInputsPtr);
-            if (!ok)
-            {
-                throw new Exception("Failed to set system inputs");
-            }
-        }
-        finally
-        {
-            Marshal.FreeCoTaskMem(sysInputsPtr);
+            throw new Exception("Failed to set system inputs");
         }
     }
 
