@@ -35,6 +35,7 @@ public sealed class NativeStringManager : IDisposable
         {
             var tempArray = _nativeStringPointers;
             _nativeStringPointers = ArrayPool<IntPtr>.Shared.Rent(_nativeStringPointers.Length * 2);
+            _nativeStringPointers.AsSpan().Clear();
             tempArray.AsSpan(0, _currentIndex).CopyTo(_nativeStringPointers);
 
             ArrayPool<IntPtr>.Shared.Return(tempArray);
