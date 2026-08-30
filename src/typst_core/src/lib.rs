@@ -1,5 +1,5 @@
 #![allow(non_camel_case_types)]
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, c_char};
 use std::path::PathBuf;
 use std::ptr;
 
@@ -26,7 +26,8 @@ pub struct Buffer {
 
 #[repr(C)]
 pub struct Warning {
-    pub message: *mut c_char,
+    pub message_ptr: *mut u8,
+    pub message_len: usize,
 }
 
 #[repr(C)]
@@ -35,7 +36,8 @@ pub struct CompileResult {
     pub buffers_len: usize,
     pub warnings: *mut Warning,
     pub warnings_len: usize,
-    pub error: *mut c_char,
+    pub error_ptr: *mut u8,
+    pub error_len: usize,
 }
 
 impl Default for CompileResult {
@@ -45,7 +47,8 @@ impl Default for CompileResult {
             buffers_len: 0,
             warnings: ptr::null_mut(),
             warnings_len: 0,
-            error: ptr::null_mut(),
+            error_ptr: ptr::null_mut(),
+            error_len: 0,
         }
     }
 }
@@ -228,13 +231,43 @@ fn compile_inner(
     Ok((buffers, warnings))
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn compile(
+fn vec_to_raw<T>(vec: Vec<T>) -> (*mut T, usize) {
+    let boxed = vec.into_boxed_slice();
+    let len = boxed.len();
+    (Box::into_raw(boxed) as *mut T, len)
+}
+
+fn string_to_raw(s: String) -> (*mut u8, usize) {
+    vec_to_raw(s.into_bytes())
+}
+
+unsafe fn free_raw_slice<T>(ptr: *mut T, len: usize) {
+    if !ptr.is_null() {
+        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len));
+    }
+}
+
+fn make_error_result(msg: impl Into<String>) -> CompileResult {
+    let (error_ptr, error_len) = string_to_raw(msg.into());
+    CompileResult {
+        buffers: ptr::null_mut(),
+        buffers_len: 0,
+        warnings: ptr::null_mut(),
+        warnings_len: 0,
+        error_ptr,
+        error_len,
+    }
+}
+
+fn compile_internal(
     compiler: *mut Compiler,
     format_ptr: *const std::os::raw::c_char,
     ppi: f32,
     pdf_standards: *const std::os::raw::c_char,
 ) -> CompileResult {
+    if compiler.is_null() {
+        return make_error_result("Null compiler pointer");
+    }
     let compiler = unsafe { &mut *compiler };
     let format_str = if format_ptr.is_null() {
         "pdf"
@@ -275,13 +308,7 @@ pub extern "C" fn compile(
                 if let Some(std) = parsed {
                     standards.push(std);
                 } else {
-                    return CompileResult {
-                        buffers: ptr::null_mut(),
-                        buffers_len: 0,
-                        warnings: ptr::null_mut(),
-                        warnings_len: 0,
-                        error: CString::new(format!("Invalid PDF standard: {}", s)).unwrap().into_raw(),
-                    };
+                    return make_error_result(format!("Invalid PDF standard: {}", s));
                 }
             }
         }
@@ -289,50 +316,60 @@ pub extern "C" fn compile(
 
     match compile_inner(&mut compiler.0, format_str, ppi, &standards) {
         Ok((buffers, warnings)) => {
-            let mut c_buffers: Vec<Buffer> = buffers
+            let c_buffers: Vec<Buffer> = buffers
                 .into_iter()
-                .map(|mut b| {
-                    b.shrink_to_fit();
-                    let buffer = Buffer {
-                        ptr: b.as_mut_ptr(),
-                        len: b.len(),
-                    };
-                    std::mem::forget(b);
-                    buffer
+                .map(|b| {
+                    let (ptr, len) = vec_to_raw(b);
+                    Buffer { ptr, len }
                 })
                 .collect();
 
-            let mut c_warnings: Vec<Warning> = warnings
+            let c_warnings: Vec<Warning> = warnings
                 .into_iter()
                 .map(|w| {
-                    let msg = w.message.to_string();
-                    let message = CString::new(msg).unwrap().into_raw();
-                    Warning { message }
+                    let (message_ptr, message_len) = string_to_raw(w.message.to_string());
+                    Warning { message_ptr, message_len }
                 })
                 .collect();
 
-            c_buffers.shrink_to_fit();
-            c_warnings.shrink_to_fit();
+            let (buffers_ptr, buffers_len) = vec_to_raw(c_buffers);
+            let (warnings_ptr, warnings_len) = vec_to_raw(c_warnings);
 
-            let result = CompileResult {
-                buffers: c_buffers.as_mut_ptr(),
-                buffers_len: c_buffers.len(),
-                warnings: c_warnings.as_mut_ptr(),
-                warnings_len: c_warnings.len(),
-                error: ptr::null_mut(),
-            };
-
-            std::mem::forget(c_buffers);
-            std::mem::forget(c_warnings);
-
-            result
-        }
-        Err(err) => {
-            let error_str = CString::new(err.to_string()).unwrap();
             CompileResult {
-                error: error_str.into_raw(),
-                ..Default::default()
+                buffers: buffers_ptr,
+                buffers_len,
+                warnings: warnings_ptr,
+                warnings_len,
+                error_ptr: ptr::null_mut(),
+                error_len: 0,
             }
+        }
+        Err(err) => make_error_result(err.to_string()),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn compile(
+    compiler: *mut Compiler,
+    format_ptr: *const std::os::raw::c_char,
+    ppi: f32,
+    pdf_standards: *const std::os::raw::c_char,
+) -> CompileResult {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compile_internal(compiler, format_ptr, ppi, pdf_standards)
+    }));
+
+    match result {
+        Ok(res) => res,
+        Err(err) => {
+            let msg = if let Some(s) = err.downcast_ref::<&str>() {
+                *s
+            } else if let Some(s) = err.downcast_ref::<String>() {
+                s.as_str()
+            } else {
+                "Unknown panic"
+            };
+            make_error_result(format!("Panic: {}", msg))
         }
     }
 }
@@ -341,21 +378,25 @@ pub extern "C" fn compile(
 pub extern "C" fn free_compile_result(result: CompileResult) {
     unsafe {
         if !result.buffers.is_null() {
-            let buffers =
-                Vec::from_raw_parts(result.buffers, result.buffers_len, result.buffers_len);
-            for buffer in buffers {
-                let _ = Vec::from_raw_parts(buffer.ptr, buffer.len, buffer.len);
+            let buffers = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                result.buffers,
+                result.buffers_len,
+            ));
+            for buffer in buffers.iter() {
+                free_raw_slice(buffer.ptr, buffer.len);
             }
         }
         if !result.warnings.is_null() {
-            let warnings =
-                Vec::from_raw_parts(result.warnings, result.warnings_len, result.warnings_len);
-            for warning in warnings {
-                let _ = CString::from_raw(warning.message);
+            let warnings = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                result.warnings,
+                result.warnings_len,
+            ));
+            for warning in warnings.iter() {
+                free_raw_slice(warning.message_ptr, warning.message_len);
             }
         }
-        if !result.error.is_null() {
-            let _ = CString::from_raw(result.error);
+        if !result.error_ptr.is_null() {
+            free_raw_slice(result.error_ptr, result.error_len);
         }
     }
 }
@@ -363,14 +404,4 @@ pub extern "C" fn free_compile_result(result: CompileResult) {
 #[unsafe(no_mangle)]
 pub extern "C" fn reset_world() {
     comemo::evict(10);
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn free_string(s: *mut c_char) {
-    unsafe {
-        if s.is_null() {
-            return;
-        }
-        let _ = CString::from_raw(s);
-    }
 }
