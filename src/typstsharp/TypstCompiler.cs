@@ -136,9 +136,9 @@ public unsafe class TypstCompiler : IDisposable
             var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, (byte*)standardsPtr);
             try
             {
-                if (native.error != null)
+                if (native.error_ptr != null)
                 {
-                    var error = Marshal.PtrToStringUTF8((nint)native.error) ?? "Unknown Typst error";
+                    var error = System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(native.error_ptr, checked((int)native.error_len)));
                     throw new InvalidOperationException(error);
                 }
 
@@ -163,7 +163,10 @@ public unsafe class TypstCompiler : IDisposable
                     for (nuint i = 0; i < native.warnings_len; i++)
                     {
                         var warning = native.warnings[i];
-                        managedWarnings.Add(Marshal.PtrToStringUTF8((nint)warning.message) ?? string.Empty);
+                        string warningText = warning.message_ptr != null 
+                            ? System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(warning.message_ptr, checked((int)warning.message_len))) 
+                            : string.Empty;
+                        managedWarnings.Add(warningText);
                     }
                 }
 

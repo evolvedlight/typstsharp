@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
@@ -61,6 +61,39 @@ public class Tests
                 _ = compiler.Compile();
             }).Throws<InvalidOperationException>()
             .WithMessageMatching(regexMatcher);
+    }
+
+    [Test]
+    public async Task WarningWithNullByteIsHandledCorrectly()
+    {
+        using var compiler = TypstCompiler.FromSource("#set text(font: sys.inputs.f)");
+        compiler.SetSysInputs(new Dictionary<string, string> { ["f"] = "A\0B" });
+        var outcome = compiler.Compile();
+        await Assert.That(outcome.Warnings[0]).Contains("a\0b");
+    }
+
+    [Test]
+    public async Task ErrorWithNullByteIsHandledCorrectly()
+    {
+        var ex = await Assert.That(() =>
+        {
+            using var compiler = TypstCompiler.FromSource("#panic(sys.inputs.f)");
+            compiler.SetSysInputs(new Dictionary<string, string> { ["f"] = "foo\0bar" });
+            _ = compiler.Compile();
+        }).Throws<InvalidOperationException>();
+
+        await Assert.That(ex!.Message).Contains("foo\0bar");
+    }
+
+    [Test]
+    public async Task InvalidPdfStandardThrowsException()
+    {
+        await Assert.That(() =>
+        {
+            using var compiler = TypstCompiler.FromSource("Hello world");
+            _ = compiler.Compile(pdfStandards: ["nonexistent-standard"]);
+        }).Throws<InvalidOperationException>()
+        .WithMessageMatching(StringMatcher.AsRegex(@"^Invalid PDF standard: nonexistent-standard$"));
     }
 
     private static string GetPlainText(byte[] pdf)

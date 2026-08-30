@@ -1,4 +1,4 @@
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, CString};
 
 use typst_core::{compile, create_compiler, free_compile_result, free_compiler};
 
@@ -21,9 +21,12 @@ fn invalid_single_line_string_produces_an_error() {
     assert!(!compiler.is_null(), "failed to create compiler");
 
     let result = compile(compiler, std::ptr::null(), 96.0, std::ptr::null());
-    assert!(!result.error.is_null(), "invalid document compiled without an error");
+    assert!(!result.error_ptr.is_null(), "invalid document compiled without an error");
 
-    let error = unsafe { CStr::from_ptr(result.error).to_string_lossy().into_owned() };
+    let error = unsafe {
+        let slice = std::slice::from_raw_parts(result.error_ptr, result.error_len);
+        String::from_utf8_lossy(slice).into_owned()
+    };
     dbg!(&error);
 
     free_compile_result(result);
@@ -58,9 +61,12 @@ fn invalid_multi_line_string_produces_multiple_errors() {
     assert!(!compiler.is_null(), "failed to create compiler");
 
     let result = compile(compiler, std::ptr::null(), 96.0, std::ptr::null());
-    assert!(!result.error.is_null(), "invalid document compiled without an error");
+    assert!(!result.error_ptr.is_null(), "invalid document compiled without an error");
 
-    let error = unsafe { CStr::from_ptr(result.error).to_string_lossy().into_owned() };
+    let error = unsafe {
+        let slice = std::slice::from_raw_parts(result.error_ptr, result.error_len);
+        String::from_utf8_lossy(slice).into_owned()
+    };
     dbg!(&error);
 
     free_compile_result(result);

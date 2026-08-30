@@ -37,9 +37,6 @@ namespace CsBindgen
         [DllImport(__DllName, EntryPoint = "reset_world", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void reset_world();
 
-        [DllImport(__DllName, EntryPoint = "free_string", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void free_string(byte* s);
-
 
     }
 
@@ -58,7 +55,8 @@ namespace CsBindgen
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct Warning
     {
-        public byte* message;
+        public byte* message_ptr;
+        public nuint message_len;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -68,7 +66,8 @@ namespace CsBindgen
         public nuint buffers_len;
         public Warning* warnings;
         public nuint warnings_len;
-        public byte* error;
+        public byte* error_ptr;
+        public nuint error_len;
     }
 
 
