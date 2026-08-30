@@ -88,6 +88,27 @@ var result = compiler.Compile(format: "pdf", pdfStandards: new[] { "a-2b", "v-1.
 await File.WriteAllBytesAsync("archival.pdf", result.Buffers[0]);
 ```
 
+### Packages
+
+`packagePath` points the compiler at a directory of Typst packages, laid out as
+`<namespace>/<name>/<version>` just like the machine-wide package directory. It is searched first,
+and anything not found there still falls back to the machine-wide directories and, for `@preview`,
+to a download from Typst Universe.
+
+Pass `includeSystemPackages: false` to drop those fallbacks. Packages then resolve from
+`packagePath` alone, an import that is not vendored there fails with `package not found` instead of
+being fetched, and compilation never touches the network:
+
+```csharp
+var compiler = TypstCompiler.FromFile(
+    "label.typ",
+    packagePath: Path.Combine(AppContext.BaseDirectory, "TypstPackages"),
+    includeSystemPackages: false);
+```
+
+This is what an application that ships its packages alongside its binaries wants, and it keeps
+builds reproducible: whatever is deployed is exactly what gets compiled.
+
 You can easily use this inside of an ASP.Net Server (just ensure you lazy load and cache the TypstCompiler to reduce from 40ms to around 3ms for a normal compile).
 
 ## Prerequisites
