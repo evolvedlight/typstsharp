@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
@@ -14,6 +14,167 @@ public class Tests
         var result = compiler.Compile().Buffers[0];
         var plainText = GetPlainText(result);
         await Assert.That(plainText).Contains("World 2");
+    }
+
+    [Test]
+    public async Task CompilePdfDirect()
+    {
+        using var compiler = TypstCompiler.FromSource("= Hello Direct PDF");
+        byte[] pdf = compiler.CompilePdf();
+        var plainText = GetPlainText(pdf);
+        await Assert.That(plainText).Contains("Hello Direct PDF");
+    }
+
+    [Test]
+    public async Task CompilePdfStatic()
+    {
+        byte[] pdf = TypstCompiler.CompilePdf("= Hello Static PDF");
+        var plainText = GetPlainText(pdf);
+        await Assert.That(plainText).Contains("Hello Static PDF");
+    }
+
+    [Test]
+    public async Task CompilePdfStaticFromFile()
+    {
+        var tempFile = Path.Combine(Path.GetTempPath(), $"typst-{Guid.NewGuid():N}.typ");
+        try
+        {
+            await File.WriteAllTextAsync(tempFile, "= Hello From Temp File");
+            byte[] pdf = TypstCompiler.CompilePdfFromFile(tempFile);
+            var plainText = GetPlainText(pdf);
+            await Assert.That(plainText).Contains("Hello From Temp File");
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    [Test]
+    public async Task CompilePdfToFileAndAsync()
+    {
+        using var compiler = TypstCompiler.FromSource("= Hello PDF To File");
+        var tempPdf1 = Path.Combine(Path.GetTempPath(), $"typst-{Guid.NewGuid():N}.pdf");
+        var tempPdf2 = Path.Combine(Path.GetTempPath(), $"typst-{Guid.NewGuid():N}.pdf");
+        try
+        {
+            compiler.CompilePdf(tempPdf1);
+            await Assert.That(File.Exists(tempPdf1)).IsTrue();
+            var text1 = GetPlainText(await File.ReadAllBytesAsync(tempPdf1));
+            await Assert.That(text1).Contains("Hello PDF To File");
+
+            await compiler.CompilePdfAsync(tempPdf2);
+            await Assert.That(File.Exists(tempPdf2)).IsTrue();
+            var text2 = GetPlainText(await File.ReadAllBytesAsync(tempPdf2));
+            await Assert.That(text2).Contains("Hello PDF To File");
+        }
+        finally
+        {
+            if (File.Exists(tempPdf1)) File.Delete(tempPdf1);
+            if (File.Exists(tempPdf2)) File.Delete(tempPdf2);
+        }
+    }
+
+    [Test]
+    public async Task CompilePdfToStreamAndAsync()
+    {
+        using var compiler = TypstCompiler.FromSource("= Stream Test");
+        
+        using var ms1 = new MemoryStream();
+        compiler.CompilePdf(ms1);
+        var text1 = GetPlainText(ms1.ToArray());
+        await Assert.That(text1).Contains("Stream Test");
+
+        using var ms2 = new MemoryStream();
+        await compiler.CompilePdfAsync(ms2);
+        var text2 = GetPlainText(ms2.ToArray());
+        await Assert.That(text2).Contains("Stream Test");
+    }
+
+    [Test]
+    public async Task CompileOutcomeAsPdfAndPrimaryBuffer()
+    {
+        using var compiler = TypstCompiler.FromSource("= Outcome Helper Test");
+        var outcome = compiler.Compile();
+        
+        byte[] pdf1 = outcome.AsPdf();
+        byte[] pdf2 = outcome.PrimaryBuffer;
+
+        await Assert.That(GetPlainText(pdf1)).Contains("Outcome Helper Test");
+        await Assert.That(GetPlainText(pdf2)).Contains("Outcome Helper Test");
+    }
+
+    [Test]
+    public async Task CompileSvgAndPng()
+    {
+        using var compiler = TypstCompiler.FromSource("= Hello Vector and Raster");
+        
+        var svg = compiler.CompileSvg();
+        await Assert.That(svg.Count).IsEqualTo(1);
+        await Assert.That(svg[0]).Contains("<svg");
+        await Assert.That(svg.SinglePage).Contains("<svg");
+        await Assert.That(svg.PrimaryPage).Contains("<svg");
+
+        // Implicit string conversion for single/primary SVG page
+        string svgString = svg;
+        await Assert.That(svgString).Contains("<svg");
+
+        var png = compiler.CompilePng();
+        await Assert.That(png.Count).IsEqualTo(1);
+        await Assert.That(png.SinglePage.Length).IsGreaterThan(8);
+        await Assert.That(png.PrimaryPage.Length).IsGreaterThan(8);
+        // PNG magic header: 0x89, 0x50, 0x4E, 0x47
+        await Assert.That(png[0].Length).IsGreaterThan(8);
+        await Assert.That(png[0][0]).IsEqualTo((byte)0x89);
+        await Assert.That(png[0][1]).IsEqualTo((byte)0x50);
+        await Assert.That(png[0][2]).IsEqualTo((byte)0x4E);
+        await Assert.That(png[0][3]).IsEqualTo((byte)0x47);
+    }
+
+    [Test]
+    public async Task CompileSingleSvgStandaloneFormula()
+    {
+        // Example of compiling a formula/diagram snippet to a standalone tightly-cropped SVG
+        const string snippet = """
+            #set page(width: auto, height: auto, margin: 5pt)
+            $ integral_0^infinity e^(-x^2) dif x = sqrt(pi)/2 $
+            """;
+
+        // One-liner static call returning string via implicit conversion
+        string singleSvg = TypstCompiler.CompileSvg(snippet);
+        await Assert.That(singleSvg).Contains("<svg");
+        await Assert.That(singleSvg).Contains("</svg>");
+
+        // Test saving to file
+        var tempSvg = Path.Combine(Path.GetTempPath(), $"typst-{Guid.NewGuid():N}.svg");
+        try
+        {
+            var result = TypstCompiler.CompileSvg(snippet);
+            await result.SaveAsync(tempSvg);
+            await Assert.That(File.Exists(tempSvg)).IsTrue();
+            var content = await File.ReadAllTextAsync(tempSvg);
+            await Assert.That(content).Contains("<svg");
+        }
+        finally
+        {
+            if (File.Exists(tempSvg)) File.Delete(tempSvg);
+        }
+    }
+
+    [Test]
+    public async Task CompileMultiPageSvgSinglePageThrows()
+    {
+        // Multi-page document: SinglePage property should throw InvalidOperationException
+        const string multiPage = """
+            Page 1
+            #pagebreak()
+            Page 2
+            """;
+
+        var result = TypstCompiler.CompileSvg(multiPage);
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(() => _ = result.SinglePage).Throws<InvalidOperationException>();
+        await Assert.That(result.PrimaryPage).Contains("<svg");
     }
 
     [Test]

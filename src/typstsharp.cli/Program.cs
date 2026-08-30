@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using typstsharp;
@@ -32,10 +32,8 @@ var sysInputs = new Dictionary<string, string>
     { "data", System.Text.Json.JsonSerializer.Serialize(new DataObj { item = 17 }) }
 };
 clientFile.SetSysInputs(sysInputs);
-var outputFile = clientFile.Compile();
-
-File.WriteAllBytes("output_file.pdf", outputFile.Buffers[0]);
-Console.WriteLine("Compiled output_file.pdf from input.typ");
+var pdfResult = clientFile.CompilePdf("output_file.pdf");
+Console.WriteLine($"Compiled output_file.pdf from input.typ ({pdfResult.Length} bytes)");
 
 
 Console.WriteLine("\n--- Test 2: Compile from Source String ---");
@@ -45,10 +43,20 @@ var sourceString = """
     This document was compiled directly from a string in memory.
     """;
 
-using var clientSource = TypstCompiler.FromSource(sourceString);
-var outputSource = clientSource.Compile();
-File.WriteAllBytes("output_source.pdf", outputSource.Buffers[0]);
-Console.WriteLine("Compiled output_source.pdf from string source");
+// One-liner static helper
+TypstCompiler.CompilePdf(sourceString).Save("output_source.pdf");
+Console.WriteLine("Compiled output_source.pdf directly from string source");
+
+
+Console.WriteLine("\n--- Test 3: Compile Single SVG ---");
+var formula = """
+    #set page(width: auto, height: auto, margin: 5pt)
+    $ integral_0^infinity e^(-x^2) dif x = sqrt(pi)/2 $
+    """;
+
+string svg = TypstCompiler.CompileSvg(formula);
+TypstCompiler.CompileSvg(formula).Save("output_formula.svg");
+Console.WriteLine($"Compiled output_formula.svg ({svg.Length} characters)");
 
 
 // open output.pdf via windows
