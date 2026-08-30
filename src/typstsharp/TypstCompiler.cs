@@ -25,9 +25,16 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="inputPath">The path to the Typst source file to compile.</param>
     /// <param name="fonts">Font settings, including system fonts and custom font paths.</param>
     /// <param name="sysInputs">Initial system inputs (legacy, prefer SetSysInputs).</param>
+    /// <param name="root">Root directory.</param>
+    /// <param name="packagePath">Directory that packages are resolved from, in place of the machine-wide package directory.</param>
+    /// <param name="includeSystemPackages">
+    /// Whether the machine-wide package directories and the Typst Universe registry may be used.
+    /// Pass <c>false</c> together with <paramref name="packagePath"/> to resolve packages only from
+    /// that directory, which keeps compilation off the network.
+    /// </param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
-    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
-        : this(inputPath, null, fonts, sysInputs, root, packagePath)
+    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+        : this(inputPath, null, fonts, sysInputs, root, packagePath, includeSystemPackages)
     {
     }
 
@@ -38,10 +45,16 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="fonts">Font settings.</param>
     /// <param name="sysInputs">System inputs.</param>
     /// <param name="root">Root directory.</param>
+    /// <param name="packagePath">Directory that packages are resolved from, in place of the machine-wide package directory.</param>
+    /// <param name="includeSystemPackages">
+    /// Whether the machine-wide package directories and the Typst Universe registry may be used.
+    /// Pass <c>false</c> together with <paramref name="packagePath"/> to resolve packages only from
+    /// that directory, which keeps compilation off the network.
+    /// </param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
+    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
-        return new TypstCompiler(null, source, fonts, sysInputs, root, packagePath);
+        return new TypstCompiler(null, source, fonts, sysInputs, root, packagePath, includeSystemPackages);
     }
 
     /// <summary>
@@ -51,19 +64,26 @@ public unsafe class TypstCompiler : IDisposable
     /// <param name="fonts">Font settings.</param>
     /// <param name="sysInputs">System inputs.</param>
     /// <param name="root">Root directory.</param>
+    /// <param name="packagePath">Directory that packages are resolved from, in place of the machine-wide package directory.</param>
+    /// <param name="includeSystemPackages">
+    /// Whether the machine-wide package directories and the Typst Universe registry may be used.
+    /// Pass <c>false</c> together with <paramref name="packagePath"/> to resolve packages only from
+    /// that directory, which keeps compilation off the network.
+    /// </param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null)
+    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
-        return new TypstCompiler(path, null, fonts, sysInputs, root, packagePath);
+        return new TypstCompiler(path, null, fonts, sysInputs, root, packagePath, includeSystemPackages);
     }
 
     
 
-    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root, string? packagePath = null)
+    private TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root, string? packagePath = null, bool includeSystemPackages = true)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? [];
         bool ignoreSystemFonts = !fonts.IncludeSystemFonts;
+        bool ignoreSystemPackages = !includeSystemPackages;
 
         var inputPathPtr = inputPath != null ? Marshal.StringToCoTaskMemUTF8(inputPath) : IntPtr.Zero;
         var inputSourcePtr = inputSource != null ? Marshal.StringToCoTaskMemUTF8(inputSource) : IntPtr.Zero;
@@ -99,7 +119,8 @@ public unsafe class TypstCompiler : IDisposable
                     (nuint)fontPathsList.Count, 
                     (byte*)packagePathPtr,
                     (byte*)sysInputsPtr, 
-                    ignoreSystemFonts);
+                    ignoreSystemFonts,
+                    ignoreSystemPackages);
             }
 
             if (_compiler == null)

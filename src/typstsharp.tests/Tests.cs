@@ -61,6 +61,73 @@ public class Tests
             .WithMessageMatching(regexMatcher);
     }
 
+    /// <summary>
+    /// An application that ships its packages next to the binary resolves them from that
+    /// folder without the machine-wide package directories or the registry taking part.
+    /// </summary>
+    [Test]
+    public async Task BundledPackageResolvesWithSystemPackagesExcluded()
+    {
+        using var packages = new PackageDirectory();
+        packages.AddPackage("local", "greet", "0.1.0", "#let greet() = [Hello from a bundled package]");
+
+        using var compiler = TypstCompiler.FromSource(
+            """
+            #import "@local/greet:0.1.0": greet
+            #greet()
+            """,
+            packagePath: packages.Path,
+            includeSystemPackages: false);
+
+        var plainText = GetPlainText(compiler.Compile().Buffers[0]);
+
+        await Assert.That(plainText).Contains("Hello from a bundled package");
+    }
+
+    /// <summary>
+    /// `@preview/example:0.1.0` is published on Typst Universe, so this compiles only if the
+    /// registry is reachable. Excluding system packages has to turn it into a hard failure
+    /// rather than a download.
+    /// </summary>
+    [Test]
+    public async Task ExcludingSystemPackagesKeepsTheRegistryOutOfReach()
+    {
+        using var packages = new PackageDirectory();
+
+        await Assert.That(() =>
+            {
+                using var compiler = TypstCompiler.FromSource(
+                    """
+                    #import "@preview/example:0.1.0": *
+                    #add(1, 2)
+                    """,
+                    packagePath: packages.Path,
+                    includeSystemPackages: false);
+                _ = compiler.Compile();
+            }).Throws<InvalidOperationException>()
+            .WithMessageContaining("package not found");
+    }
+
+    /// <summary>
+    /// Without a package path there is nowhere left to look once system packages are excluded,
+    /// so even a package installed on the machine stays invisible.
+    /// </summary>
+    [Test]
+    public async Task ExcludingSystemPackagesWithoutAPackagePathFindsNothing()
+    {
+        await Assert.That(() =>
+            {
+                using var compiler = TypstCompiler.FromSource(
+                    """
+                    #import "@local/greet:0.1.0": greet
+                    #greet()
+                    """,
+                    includeSystemPackages: false);
+                _ = compiler.Compile();
+            }).Throws<InvalidOperationException>()
+            .WithMessageContaining("package not found");
+    }
+
     private static string GetPlainText(byte[] pdf)
     {
         var sb = new StringBuilder();
@@ -74,5 +141,38 @@ public class Tests
         }
 
         return sb.ToString();
+    }
+}
+
+/// <summary>
+/// A throwaway package directory laid out the way Typst expects: one directory level per
+/// namespace, package name and version.
+/// </summary>
+internal sealed class PackageDirectory : IDisposable
+{
+    public PackageDirectory() => Directory.CreateDirectory(Path);
+
+    public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"typstsharp-packages-{Guid.NewGuid():N}");
+
+    public void AddPackage(string @namespace, string name, string version, string entrypointSource)
+    {
+        var directory = System.IO.Path.Combine(Path, @namespace, name, version);
+        Directory.CreateDirectory(directory);
+
+        File.WriteAllText(System.IO.Path.Combine(directory, "typst.toml"), $"""
+            [package]
+            name = "{name}"
+            version = "{version}"
+            entrypoint = "lib.typ"
+            """);
+        File.WriteAllText(System.IO.Path.Combine(directory, "lib.typ"), entrypointSource);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(Path))
+        {
+            Directory.Delete(Path, recursive: true);
+        }
     }
 }
