@@ -17,6 +17,7 @@ fn invalid_single_line_string_produces_an_error() {
         std::ptr::null(),
         sys_inputs.as_ptr(),
         true,
+        true,
     );
     assert!(!compiler.is_null(), "failed to create compiler");
 
@@ -56,6 +57,7 @@ fn invalid_multi_line_string_produces_multiple_errors() {
         0,
         std::ptr::null(),
         sys_inputs.as_ptr(),
+        true,
         true,
     );
     assert!(!compiler.is_null(), "failed to create compiler");

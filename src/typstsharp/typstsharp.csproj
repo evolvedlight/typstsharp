@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU5118</NoWarn>
 
     <PackageId>typstsharp</PackageId>
     <Version>0.0.1-typst0.15.0</Version>
@@ -45,6 +46,14 @@
     <RustRuntime Include="linux-x64">
       <TargetTriple>x86_64-unknown-linux-musl</TargetTriple>
       <LibraryFileName>libtypst_core.so</LibraryFileName>
+    </RustRuntime>
+    <RustRuntime Include="osx-x64">
+      <TargetTriple>x86_64-apple-darwin</TargetTriple>
+      <LibraryFileName>libtypst_core.dylib</LibraryFileName>
+    </RustRuntime>
+    <RustRuntime Include="osx-arm64">
+      <TargetTriple>aarch64-apple-darwin</TargetTriple>
+      <LibraryFileName>libtypst_core.dylib</LibraryFileName>
     </RustRuntime>
 
   </ItemGroup>

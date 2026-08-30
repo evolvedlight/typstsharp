@@ -72,6 +72,7 @@ impl SystemWorld {
         input_path: Option<PathBuf>,
         input_content: Option<String>,
         include_system_fonts: bool,
+        include_system_packages: bool,
     ) -> StrResult<Self> {
         let mut fonts = typst_kit::fonts::FontStore::new();
 
@@ -113,6 +114,24 @@ impl SystemWorld {
 
         let book = fonts.book().clone();
 
+        // Packages are looked up in the configured directory first, then in the
+        // machine-wide data and cache directories, and are finally downloaded from
+        // Typst Universe. Dropping the last two is what a deployment that ships its
+        // packages next to the application needs: `SystemPackages::obtain` only
+        // reaches the registry through a cache directory, so leaving the cache out
+        // keeps resolution on the configured directory and off the network.
+        let package_data = match package_path {
+            Some(path) => Some(FsPackages::new(path)),
+            None if include_system_packages => FsPackages::system_data(),
+            None => None,
+        };
+
+        let package_cache = if include_system_packages {
+            FsPackages::system_cache()
+        } else {
+            None
+        };
+
         Ok(Self {
             root,
             main: main_id,
@@ -126,8 +145,8 @@ impl SystemWorld {
             fonts: Arc::new(fonts),
             slots: Mutex::new(slots),
             packages: SystemPackages::from_parts(
-                package_path.map(FsPackages::new).or_else(FsPackages::system_data),
-                FsPackages::system_cache(),
+                package_data,
+                package_cache,
                 UniversePackages::new(crate::download::downloader()),
             ),
             now: typst_kit::datetime::Time::system(),
@@ -211,10 +230,10 @@ fn system_path(
     packages: &SystemPackages,
 ) -> FileResult<PathBuf> {
     match id.root() {
-        VirtualRoot::Project => Ok(id.vpath().realize(root)),
+        VirtualRoot::Project => id.vpath().realize(root).map_err(|_| FileError::AccessDenied),
         VirtualRoot::Package(spec) => {
             let package_root = packages.obtain(spec)?;
-            Ok(package_root.resolve(id.vpath()))
+            package_root.resolve(id.vpath())
         }
     }
 }

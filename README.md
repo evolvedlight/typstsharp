@@ -88,6 +88,27 @@ var result = compiler.Compile(format: "pdf", pdfStandards: new[] { "a-2b", "v-1.
 await File.WriteAllBytesAsync("archival.pdf", result.Buffers[0]);
 ```
 
+### Packages
+
+`packagePath` points the compiler at a directory of Typst packages, laid out as
+`<namespace>/<name>/<version>` just like the machine-wide package directory. It is searched first,
+and anything not found there still falls back to the machine-wide directories and, for `@preview`,
+to a download from Typst Universe.
+
+Pass `includeSystemPackages: false` to drop those fallbacks. Packages then resolve from
+`packagePath` alone, an import that is not vendored there fails with `package not found` instead of
+being fetched, and compilation never touches the network:
+
+```csharp
+var compiler = TypstCompiler.FromFile(
+    "label.typ",
+    packagePath: Path.Combine(AppContext.BaseDirectory, "TypstPackages"),
+    includeSystemPackages: false);
+```
+
+This is what an application that ships its packages alongside its binaries wants, and it keeps
+builds reproducible: whatever is deployed is exactly what gets compiled.
+
 You can easily use this inside of an ASP.Net Server (just ensure you lazy load and cache the TypstCompiler to reduce from 40ms to around 3ms for a normal compile).
 
 ## Prerequisites
@@ -99,7 +120,7 @@ You can easily use this inside of an ASP.Net Server (just ensure you lazy load a
 
 ```pwsh
 # from the repository root
- dotnet build typstsharp.sln
+ dotnet build typstsharp.slnx
 ```
 
 The build will automatically:
@@ -109,7 +130,11 @@ The build will automatically:
 3. Add the libraries to the managed project's runtime assets so that `dotnet publish`/`dotnet pack` place the files under `runtimes/<rid>/native/` in the final artifact.
 4. For local development, the native binary for the host architecture is copied to the output directory of any project referencing `typstsharp`, ensuring it's available for debugging.
 
-You can override the target runtimes by setting the `RustTargets` property (e.g., `dotnet build -p:RustTargets=win-x64`).
+You can override the target runtimes by setting the `RustTargets` property (e.g., `dotnet build -p:RustTargets=win-x64`). On macOS, use `osx-arm64` for Apple Silicon or `osx-x64` for Intel:
+
+```bash
+dotnet build -p:RustTargets=osx-arm64
+```
 
 ## Verifying the CLI
 
@@ -118,7 +143,7 @@ You can override the target runtimes by setting the `RustTargets` property (e.g.
  dotnet run --project src/typstsharp.cli/typstsharp.cli.csproj
 ```
 
-Because the Rust binary is registered as a runtime asset, `typst_core.dll`/`libtypst_core.so` will appear beside the CLI executable automatically.
+Because the Rust binary is registered as a runtime asset, `typst_core.dll`, `libtypst_core.so`, or `libtypst_core.dylib` will appear beside the CLI executable automatically.
 
 ## Notes
 

@@ -63,6 +63,7 @@ pub extern "C" fn create_compiler(
     package_path: *const c_char,
     sys_inputs: *const c_char,
     ignore_system_fonts: bool,
+    ignore_system_packages: bool,
 ) -> *mut Compiler {
     let root_str = if root.is_null() {
         "."
@@ -129,6 +130,7 @@ pub extern "C" fn create_compiler(
         input_path_buf,
         input_content,
         !ignore_system_fonts,
+        !ignore_system_packages,
     ) {
         Ok(world) => Box::into_raw(Box::new(Compiler(world))),
         Err(_) => ptr::null_mut(),
