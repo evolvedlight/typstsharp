@@ -78,6 +78,96 @@ foreach (var (person, balance) in people)
 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("output") { UseShellExecute = true });
 ```
 
+### Low-allocation output
+
+`Compile()` copies every rendered buffer onto the managed heap, which puts a multi-megabyte PDF on
+the large object heap on every call. `CompileToDocument()` instead hands back a `TypstDocument`
+that keeps the output in the memory Typst allocated, and lets you decide whether it ever needs to
+be copied at all. Dispose the document to release that memory.
+
+```csharp
+using var compiler = TypstCompiler.FromSource("= Hello World!");
+using var document = compiler.CompileToDocument();
+
+ReadOnlySpan<byte> pdf = document.GetOutputSpan();   // no copy
+using Stream stream = document.OpenOutputStream();   // no copy, seekable, has a Length
+document.WriteOutputToFile("output.pdf");            // native memory -> file handle
+byte[] copy = document.GetOutputBytes();             // explicit copy, when you need one
+```
+
+A document is a list of output buffers, not of pages. PDF export always produces exactly one
+buffer holding the whole document, however many pages it has, so `OutputCount` is 1 and the
+default `output: 0` is the one you want. PNG and SVG export produce one buffer per page.
+
+Serving a PDF from a web request writes it straight from native memory to the response body:
+
+```csharp
+app.MapGet("/label", async (HttpResponse response, CancellationToken cancellationToken) =>
+{
+    using var compiler = TypstCompiler.FromSource("= Label");
+    using var document = compiler.CompileToDocument();
+
+    response.ContentType = "application/pdf";
+    response.ContentLength = document.GetOutputLength();
+    await document.CopyOutputToAsync(response.Body, cancellationToken: cancellationToken);
+});
+```
+
+Uploading to object storage works the same way. `OpenOutputStream()` is seekable, knows its
+length, and holds the document alive for as long as the stream is referenced, so the AWS SDK can
+sign and retry the upload without buffering the document itself:
+
+```csharp
+using var document = compiler.CompileToDocument();
+using var content = document.OpenOutputStream();
+
+await s3.PutObjectAsync(new PutObjectRequest
+{
+    BucketName = bucket,
+    Key = key,
+    InputStream = content,
+    ContentType = "application/pdf",
+}, cancellationToken);
+```
+
+For bulk generation, reuse the compiler and dispose each document as soon as it has been written.
+Nothing document-sized reaches the GC:
+
+```csharp
+using var compiler = TypstCompiler.FromSource(template);
+
+foreach (var (person, balance) in people)
+{
+    compiler.SetSysInputs(new Dictionary<string, string>
+    {
+        ["first-name"] = person,
+        ["points-balance"] = balance.ToString(),
+    });
+
+    await compiler.CompileToFileAsync(Path.Combine("output", $"{person}.pdf"));
+}
+```
+
+If the bytes have to outlive the document, rent them from the array pool instead of allocating.
+The rented memory is only valid until the owner is disposed, so hand it to something that
+finishes with it inside the `using`, and do not park it in a queue that outlives the scope:
+
+```csharp
+using var document = compiler.CompileToDocument();
+using IMemoryOwner<byte> owner = document.RentOutput();   // Memory is exactly the buffer length
+
+await archive.WriteAsync(owner.Memory, cancellationToken);
+```
+
+Two different lifetimes are worth keeping apart:
+
+- `GetOutputSpan()` returns a view of native memory with no reference back to the document, so it
+  is only valid inside the scope holding the document. A `using` declaration guarantees that.
+- `OpenOutputStream()` keeps the document alive while the stream is referenced and throws
+  `ObjectDisposedException` once the document is disposed.
+- `GetOutputBytes()` and `RentOutput()` copy, so the bytes outlive the document. The rented buffer
+  is owned by the `IMemoryOwner<byte>` and goes back to the pool when you dispose it.
+
 ### PDF Standards (Typst 0.15+)
 You can export documents using specific PDF standards (like PDF/A or PDF/X) by passing them to `Compile()`. You can even specify multiple standards at once:
 

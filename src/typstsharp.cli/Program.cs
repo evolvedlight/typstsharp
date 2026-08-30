@@ -32,9 +32,8 @@ var sysInputs = new Dictionary<string, string>
     { "data", System.Text.Json.JsonSerializer.Serialize(new DataObj { item = 17 }) }
 };
 clientFile.SetSysInputs(sysInputs);
-var outputFile = clientFile.Compile();
-
-File.WriteAllBytes("output_file.pdf", outputFile.Buffers[0]);
+// Streams the rendered PDF from native memory straight to disk.
+clientFile.CompileToFile("output_file.pdf");
 Console.WriteLine("Compiled output_file.pdf from input.typ");
 
 
@@ -46,8 +45,7 @@ var sourceString = """
     """;
 
 using var clientSource = TypstCompiler.FromSource(sourceString);
-var outputSource = clientSource.Compile();
-File.WriteAllBytes("output_source.pdf", outputSource.Buffers[0]);
+await clientSource.CompileToFileAsync("output_source.pdf");
 Console.WriteLine("Compiled output_source.pdf from string source");
 
 
