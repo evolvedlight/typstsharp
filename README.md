@@ -13,11 +13,13 @@ A simple example:
 
 using typstsharp;
 
-var compiler = TypstCompiler.FromSource("= Hello World!");
-var result = compiler.Compile();
+// Direct one-liner compilation
+byte[] pdf = TypstCompiler.CompilePdf("= Hello World!");
+await File.WriteAllBytesAsync("output.pdf", pdf);
 
-var file = result.Buffers[0];
-await File.WriteAllBytesAsync("output.pdf", file);
+// Or compile and save directly:
+// TypstCompiler.CompilePdf("= Hello World!").Save("output.pdf");
+
 Console.WriteLine("PDF generated: output.pdf");
 
 // Open the generated PDF file (works on Windows)
@@ -50,7 +52,7 @@ GlorboCorp Rewards Points
 last year!
 """;
 
-var compiler = TypstCompiler.FromSource(typstInput);
+using var compiler = TypstCompiler.FromSource(typstInput);
 Directory.CreateDirectory("output");
 
 var people = new Dictionary<string, int>
@@ -68,10 +70,7 @@ foreach (var (person, balance) in people)
         ["points-balance"] = balance.ToString(),
     });
 
-    var result = compiler.Compile();
-
-    var file = result.Buffers[0];
-    await File.WriteAllBytesAsync($"output/output{person}.pdf", file);
+    await compiler.CompilePdfAsync($"output/output{person}.pdf");
     Console.WriteLine($"PDF generated: output{person}.pdf");
 }
 
@@ -79,13 +78,49 @@ System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("output
 ```
 
 ### PDF Standards (Typst 0.15+)
-You can export documents using specific PDF standards (like PDF/A or PDF/X) by passing them to `Compile()`. You can even specify multiple standards at once:
+You can export documents using specific PDF standards (like PDF/A or PDF/X) by passing them to `CompilePdf()`. You can even specify multiple standards at once:
 
 ```csharp
-var compiler = TypstCompiler.FromSource("= Archival Document");
-var result = compiler.Compile(format: "pdf", pdfStandards: new[] { "a-2b", "v-1.7" });
+using var compiler = TypstCompiler.FromSource("= Archival Document");
+var pdf = compiler.CompilePdf(pdfStandards: new[] { "a-2b", "v-1.7" });
 
-await File.WriteAllBytesAsync("archival.pdf", result.Buffers[0]);
+await pdf.SaveAsync("archival.pdf");
+```
+
+### Exporting SVG and PNG Images
+
+You can compile documents directly to SVG (vector) or PNG (raster) images:
+
+#### Single SVG (Equations, Diagrams, Icons)
+Typst can tightly fit content onto a single page using `#set page(width: auto, height: auto, margin: ...)`:
+
+```csharp
+var mathSnippet = """
+#set page(width: auto, height: auto, margin: 5pt)
+$ integral_0^infinity e^(-x^2) dif x = sqrt(pi)/2 $
+""";
+
+// One-liner: compile and get the SVG string directly
+string svg = TypstCompiler.CompileSvg(mathSnippet);
+
+// Or save it to a file
+await TypstCompiler.CompileSvg(mathSnippet).SaveAsync("formula.svg");
+```
+
+#### Multi-Page SVG / PNG
+For multi-page documents, `CompileSvg()` and `CompilePng()` return collection results with one item per page:
+
+```csharp
+using var compiler = TypstCompiler.FromSource("= Page 1\n#pagebreak()\n= Page 2");
+
+var svgResult = compiler.CompileSvg();
+Console.WriteLine($"Generated {svgResult.Count} SVG pages");
+string page1Svg = svgResult[0];
+string page2Svg = svgResult[1];
+
+// PNG export with custom PPI (default 144)
+var pngResult = compiler.CompilePng(ppi: 300);
+byte[] page1Png = pngResult[0];
 ```
 
 ### Packages
