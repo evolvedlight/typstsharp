@@ -32,6 +32,7 @@ var sysInputs = new Dictionary<string, string>
     { "data", System.Text.Json.JsonSerializer.Serialize(new DataObj { item = 17 }) }
 };
 clientFile.SetSysInputs(sysInputs);
+// Streams the rendered PDF straight to disk.
 var pdfResult = clientFile.CompilePdf("output_file.pdf");
 Console.WriteLine($"Compiled output_file.pdf from input.typ ({pdfResult.Length} bytes)");
 
