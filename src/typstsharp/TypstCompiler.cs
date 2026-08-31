@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -235,8 +236,22 @@ public class TypstCompiler : IDisposable
         }
 
         var inputPathPtr = inputPath != null ? Marshal.StringToCoTaskMemUTF8(inputPath) : IntPtr.Zero;
-        var inputSourcePtr = inputSource != null ? Marshal.StringToCoTaskMemUTF8(inputSource) : IntPtr.Zero;
-        
+
+        // The source goes over as raw UTF-8 bytes with an explicit length. A Typst
+        // document may contain NUL bytes, and a NUL-terminated string would be
+        // silently truncated at the first one.
+        byte[]? inputSourceBytes = null;
+        nuint inputSourceLen = 0;
+        if (inputSource != null)
+        {
+            var encoded = Encoding.UTF8.GetBytes(inputSource);
+            inputSourceLen = (nuint)encoded.Length;
+            // `fixed` over an empty array yields a null pointer, which the native
+            // side reads as "no source at all". A one-byte placeholder keeps an
+            // empty document distinguishable; the length passed stays 0.
+            inputSourceBytes = encoded.Length == 0 ? new byte[1] : encoded;
+        }
+
         IntPtr rootPtr = IntPtr.Zero;
         if (!string.IsNullOrWhiteSpace(root))
         {
@@ -258,16 +273,18 @@ public class TypstCompiler : IDisposable
         try
         {
             fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
+            fixed (byte* inputSourcePtr = inputSourceBytes)
             {
                 IntPtr* fontPathsPtr = fontPathsList.Count == 0 ? null : fontPathsRawPtr;
                 _compiler = CsBindgen.NativeMethods.create_compiler(
-                    (byte*)rootPtr, 
-                    (byte*)inputPathPtr, 
-                    (byte*)inputSourcePtr, 
-                    (byte**)fontPathsPtr, 
-                    (nuint)fontPathsList.Count, 
+                    (byte*)rootPtr,
+                    (byte*)inputPathPtr,
+                    inputSourcePtr,
+                    inputSourceLen,
+                    (byte**)fontPathsPtr,
+                    (nuint)fontPathsList.Count,
                     (byte*)packagePathPtr,
-                    (byte*)sysInputsPtr, 
+                    (byte*)sysInputsPtr,
                     ignoreSystemFonts,
                     ignoreSystemPackages);
             }
@@ -281,7 +298,6 @@ public class TypstCompiler : IDisposable
         {
             if (rootPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(rootPtr);
             if (inputPathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputPathPtr);
-            if (inputSourcePtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputSourcePtr);
             foreach (var ptr in fontPathPtrs) Marshal.FreeCoTaskMem(ptr);
             if (packagePathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(packagePathPtr);
             Marshal.FreeCoTaskMem(sysInputsPtr);

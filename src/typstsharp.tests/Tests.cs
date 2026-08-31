@@ -245,6 +245,16 @@ public class Tests
     }
 
     [Test]
+    public async Task SourceAfterNullByteIsNotTruncated()
+    {
+        // The source used to cross the boundary as a C string, so everything from
+        // the NUL onwards was dropped and only the first heading was rendered.
+        using var compiler = TypstCompiler.FromSource("= Before\0\n\n= After");
+        var plainText = GetPlainText(compiler.CompilePdf());
+        await Assert.That(plainText).Contains("After");
+    }
+
+    [Test]
     public async Task InvalidPdfStandardThrowsException()
     {
         await Assert.That(() =>

@@ -57,7 +57,8 @@ impl Default for CompileResult {
 pub extern "C" fn create_compiler(
     root: *const c_char,
     input_path: *const c_char,
-    input_source: *const c_char,
+    input_source: *const u8,
+    input_source_len: usize,
     font_paths: *const *const c_char,
     font_paths_len: usize,
     package_path: *const c_char,
@@ -87,11 +88,16 @@ pub extern "C" fn create_compiler(
         None
     };
 
-    let input_content = if !input_source.is_null() {
-        let s = unsafe { CStr::from_ptr(input_source).to_str().unwrap_or("") };
-        Some(s.to_string())
-    } else {
+    // The source is taken as an explicit (pointer, length) pair rather than a C
+    // string. A Typst document may legitimately contain NUL bytes, and reading it
+    // as a C string would silently cut the document off at the first one. A null
+    // pointer means "no in-memory source", which is distinct from a zero length,
+    // which means an empty document.
+    let input_content = if input_source.is_null() {
         None
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(input_source, input_source_len) };
+        Some(String::from_utf8_lossy(bytes).into_owned())
     };
 
     let sys_inputs_str = unsafe { CStr::from_ptr(sys_inputs).to_str().unwrap_or("{}") };
