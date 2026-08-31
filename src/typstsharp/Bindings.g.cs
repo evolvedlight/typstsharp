@@ -18,33 +18,105 @@ namespace CsBindgen
 
 
 
+        /// <summary>
+        ///  Creates a compiler that reads its document either from `input_path` or from `input_source`.
+        ///
+        ///  # Safety
+        ///
+        ///  `root`, `input_path`, `package_path` and `sys_inputs` must be null or NUL-terminated strings,
+        ///  `font_paths` must be null or point to `font_paths_len` such strings, and `input_source` must be
+        ///  null or point to `input_source_len` bytes. Unlike the others, the source is passed with an
+        ///  explicit length and may contain NUL bytes. All of them need only stay valid for the duration of
+        ///  the call. The returned compiler is owned by the caller and must be released with
+        ///  [`free_compiler`].
+        /// </summary>
         [DllImport(__DllName, EntryPoint = "create_compiler", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern Compiler* create_compiler(byte* root, byte* input_path, byte* input_source, nuint input_source_len, byte** font_paths, nuint font_paths_len, byte* package_path, byte* sys_inputs, [MarshalAs(UnmanagedType.U1)] bool ignore_system_fonts, [MarshalAs(UnmanagedType.U1)] bool ignore_system_packages);
 
+        /// <summary>
+        ///  Releases a compiler created by [`create_compiler`]. A null pointer is ignored.
+        ///
+        ///  Results previously returned by [`compile`] are unaffected: they own their memory and stay valid.
+        ///
+        ///  # Safety
+        ///
+        ///  `compiler` must be null or a pointer returned by [`create_compiler`] that has not already been
+        ///  freed, and no other thread may be using it.
+        /// </summary>
         [DllImport(__DllName, EntryPoint = "free_compiler", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void free_compiler(Compiler* compiler);
 
+        /// <summary>
+        ///  Replaces the `sys.inputs` dictionary the next compilation will see. Returns `false` if the
+        ///  compiler is null, the JSON does not parse, or Typst rejects the dictionary.
+        ///
+        ///  # Safety
+        ///
+        ///  `compiler` must be null or a live pointer from [`create_compiler`], and `sys_inputs` must be
+        ///  null or a NUL-terminated JSON object that stays valid for the duration of the call.
+        /// </summary>
         [DllImport(__DllName, EntryPoint = "set_sys_inputs", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         [return: MarshalAs(UnmanagedType.U1)]
         internal static extern bool set_sys_inputs(Compiler* compiler, byte* sys_inputs);
 
+        /// <summary>
+        ///  Compiles the document to `format`, which is one of `pdf`, `png` or `svg`.
+        ///
+        ///  The returned [`CompileResult`] owns its buffers and messages. They do not borrow from
+        ///  `compiler`, so they outlive further compilations, [`set_sys_inputs`], [`reset_world`] and even
+        ///  [`free_compiler`] on the compiler that produced them. The caller must pass the result to
+        ///  [`free_compile_result`] exactly once.
+        ///
+        ///  A panic inside Typst is caught and reported as an error result rather than unwinding across the
+        ///  ABI boundary.
+        ///
+        ///  # Safety
+        ///
+        ///  `compiler` must be null or a live pointer from [`create_compiler`] that no other thread is
+        ///  using. `format_ptr` and `pdf_standards` must be null or NUL-terminated strings that stay valid
+        ///  for the duration of the call.
+        /// </summary>
         [DllImport(__DllName, EntryPoint = "compile", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern CompileResult compile(Compiler* compiler, byte* format_ptr, float ppi, byte* pdf_standards);
 
+        /// <summary>
+        ///  Releases every allocation owned by a [`CompileResult`]: the buffers, the warning messages and
+        ///  the error message. May be called from any thread.
+        ///
+        ///  # Safety
+        ///
+        ///  `result` must be a value returned by [`compile`] that has not already been passed to this
+        ///  function, and nothing may read from its buffers afterwards. Calling this twice on the same
+        ///  result frees the same allocations twice.
+        /// </summary>
         [DllImport(__DllName, EntryPoint = "free_compile_result", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void free_compile_result(CompileResult result);
 
+        /// <summary>
+        ///  Trims the process-global incremental compilation cache. It holds no references to any
+        ///  [`CompileResult`], so trimming it never invalidates output the caller is still holding.
+        /// </summary>
         [DllImport(__DllName, EntryPoint = "reset_world", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void reset_world();
 
 
     }
 
+    /// <summary>
+    ///  The stateful Typst compilation world, kept alive across compilations so that the incremental
+    ///  cache can be reused.
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct Compiler
     {
     }
 
+    /// <summary>
+    ///  One rendered output: the whole document for PDF export, one page for PNG and SVG.
+    ///
+    ///  The bytes are owned by the [`CompileResult`] that contains this buffer and are freed by
+    ///  [`free_compile_result`]. They are not NUL-terminated; `len` is the only length.
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct Buffer
     {
@@ -52,6 +124,12 @@ namespace CsBindgen
         public nuint len;
     }
 
+    /// <summary>
+    ///  One warning emitted by a compilation that nevertheless succeeded.
+    ///
+    ///  `message_ptr` is UTF-8 and is not NUL-terminated, so it must be read with `message_len`. A
+    ///  message may itself contain NUL bytes, because Typst diagnostics quote the source.
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct Warning
     {
@@ -59,6 +137,13 @@ namespace CsBindgen
         public nuint message_len;
     }
 
+    /// <summary>
+    ///  The outcome of one [`compile`] call, owning everything it points at.
+    ///
+    ///  Either `error_ptr` is non-null and the compilation failed, or it is null and `buffers` holds the
+    ///  rendered output. `warnings` may be populated in both cases. Every allocation reachable from here
+    ///  is released by [`free_compile_result`], and by nothing else.
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct CompileResult
     {

@@ -1,3 +1,22 @@
+//! The C ABI that the managed `typstsharp` package binds to.
+//!
+//! Every exported function takes or returns raw pointers, so the ownership rules are the contract
+//! between this crate and its caller. They are stated on each function; the parts a caller has to
+//! rely on across calls are:
+//!
+//! - A `Compiler` is created by [`create_compiler`] and lives until [`free_compiler`]. It is not
+//!   synchronised: one compiler must not be used from two threads at once.
+//! - A [`CompileResult`] owns its buffers, warning messages and error message. Each is an
+//!   independent heap allocation, and none of them borrows from the compiler that produced them.
+//! - Those allocations stay valid until [`free_compile_result`] is called on the result that owns
+//!   them, whatever else happens in between: further [`compile`] calls, [`set_sys_inputs`],
+//!   [`free_compiler`] on the originating compiler, or [`reset_world`].
+//! - [`free_compile_result`] may be called from any thread, and must be called exactly once per
+//!   result. Calling it twice frees the same allocations twice.
+//!
+//! Callers may therefore hold a result and read from its buffers for as long as they like, which is
+//! what lets the managed side hand out the rendered document without copying it.
+
 #![allow(non_camel_case_types)]
 use std::ffi::{CStr, c_char};
 use std::path::PathBuf;
@@ -14,9 +33,14 @@ use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
 use world::SystemWorld;
 
-// This represents the stateful compiler in Rust.
+/// The stateful Typst compilation world, kept alive across compilations so that the incremental
+/// cache can be reused.
 pub struct Compiler(SystemWorld);
 
+/// One rendered output: the whole document for PDF export, one page for PNG and SVG.
+///
+/// The bytes are owned by the [`CompileResult`] that contains this buffer and are freed by
+/// [`free_compile_result`]. They are not NUL-terminated; `len` is the only length.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Buffer {
@@ -24,12 +48,21 @@ pub struct Buffer {
     pub len: usize,
 }
 
+/// One warning emitted by a compilation that nevertheless succeeded.
+///
+/// `message_ptr` is UTF-8 and is not NUL-terminated, so it must be read with `message_len`. A
+/// message may itself contain NUL bytes, because Typst diagnostics quote the source.
 #[repr(C)]
 pub struct Warning {
     pub message_ptr: *mut u8,
     pub message_len: usize,
 }
 
+/// The outcome of one [`compile`] call, owning everything it points at.
+///
+/// Either `error_ptr` is non-null and the compilation failed, or it is null and `buffers` holds the
+/// rendered output. `warnings` may be populated in both cases. Every allocation reachable from here
+/// is released by [`free_compile_result`], and by nothing else.
 #[repr(C)]
 pub struct CompileResult {
     pub buffers: *mut Buffer,
@@ -53,8 +86,18 @@ impl Default for CompileResult {
     }
 }
 
+/// Creates a compiler that reads its document either from `input_path` or from `input_source`.
+///
+/// # Safety
+///
+/// `root`, `input_path`, `package_path` and `sys_inputs` must be null or NUL-terminated strings,
+/// `font_paths` must be null or point to `font_paths_len` such strings, and `input_source` must be
+/// null or point to `input_source_len` bytes. Unlike the others, the source is passed with an
+/// explicit length and may contain NUL bytes. All of them need only stay valid for the duration of
+/// the call. The returned compiler is owned by the caller and must be released with
+/// [`free_compiler`].
 #[unsafe(no_mangle)]
-pub extern "C" fn create_compiler(
+pub unsafe extern "C" fn create_compiler(
     root: *const c_char,
     input_path: *const c_char,
     input_source: *const u8,
@@ -143,8 +186,16 @@ pub extern "C" fn create_compiler(
     }
 }
 
+/// Releases a compiler created by [`create_compiler`]. A null pointer is ignored.
+///
+/// Results previously returned by [`compile`] are unaffected: they own their memory and stay valid.
+///
+/// # Safety
+///
+/// `compiler` must be null or a pointer returned by [`create_compiler`] that has not already been
+/// freed, and no other thread may be using it.
 #[unsafe(no_mangle)]
-pub extern "C" fn free_compiler(compiler: *mut Compiler) {
+pub unsafe extern "C" fn free_compiler(compiler: *mut Compiler) {
     if !compiler.is_null() {
         unsafe {
             let _ = Box::from_raw(compiler);
@@ -152,8 +203,15 @@ pub extern "C" fn free_compiler(compiler: *mut Compiler) {
     }
 }
 
+/// Replaces the `sys.inputs` dictionary the next compilation will see. Returns `false` if the
+/// compiler is null, the JSON does not parse, or Typst rejects the dictionary.
+///
+/// # Safety
+///
+/// `compiler` must be null or a live pointer from [`create_compiler`], and `sys_inputs` must be
+/// null or a NUL-terminated JSON object that stays valid for the duration of the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn set_sys_inputs(compiler: *mut Compiler, sys_inputs: *const c_char) -> bool {
+pub unsafe extern "C" fn set_sys_inputs(compiler: *mut Compiler, sys_inputs: *const c_char) -> bool {
     if compiler.is_null() {
         return false;
     }
@@ -354,8 +412,23 @@ fn compile_internal(
     }
 }
 
+/// Compiles the document to `format`, which is one of `pdf`, `png` or `svg`.
+///
+/// The returned [`CompileResult`] owns its buffers and messages. They do not borrow from
+/// `compiler`, so they outlive further compilations, [`set_sys_inputs`], [`reset_world`] and even
+/// [`free_compiler`] on the compiler that produced them. The caller must pass the result to
+/// [`free_compile_result`] exactly once.
+///
+/// A panic inside Typst is caught and reported as an error result rather than unwinding across the
+/// ABI boundary.
+///
+/// # Safety
+///
+/// `compiler` must be null or a live pointer from [`create_compiler`] that no other thread is
+/// using. `format_ptr` and `pdf_standards` must be null or NUL-terminated strings that stay valid
+/// for the duration of the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn compile(
+pub unsafe extern "C" fn compile(
     compiler: *mut Compiler,
     format_ptr: *const std::os::raw::c_char,
     ppi: f32,
@@ -380,8 +453,16 @@ pub extern "C" fn compile(
     }
 }
 
+/// Releases every allocation owned by a [`CompileResult`]: the buffers, the warning messages and
+/// the error message. May be called from any thread.
+///
+/// # Safety
+///
+/// `result` must be a value returned by [`compile`] that has not already been passed to this
+/// function, and nothing may read from its buffers afterwards. Calling this twice on the same
+/// result frees the same allocations twice.
 #[unsafe(no_mangle)]
-pub extern "C" fn free_compile_result(result: CompileResult) {
+pub unsafe extern "C" fn free_compile_result(result: CompileResult) {
     unsafe {
         if !result.buffers.is_null() {
             let buffers = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
@@ -407,6 +488,8 @@ pub extern "C" fn free_compile_result(result: CompileResult) {
     }
 }
 
+/// Trims the process-global incremental compilation cache. It holds no references to any
+/// [`CompileResult`], so trimming it never invalidates output the caller is still holding.
 #[unsafe(no_mangle)]
 pub extern "C" fn reset_world() {
     comemo::evict(10);
