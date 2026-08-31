@@ -304,6 +304,12 @@ public class TypstCompiler : IDisposable
         try
         {
             var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, (byte*)standardsPtr);
+
+            // The P/Invoke is a preemptive-mode transition, so a collection can run while Typst is
+            // compiling. `this` is dead from the field load above onwards, so without this the
+            // finalizer could free the native world underneath the call that is still using it.
+            GC.KeepAlive(this);
+
             try
             {
                 if (native.error_ptr != null)
@@ -506,6 +512,8 @@ public class TypstCompiler : IDisposable
         try
         {
             var ok = CsBindgen.NativeMethods.set_sys_inputs(_compiler, (byte*)sysInputsPtr);
+            GC.KeepAlive(this);
+
             if (!ok)
             {
                 throw new Exception("Failed to set system inputs");
