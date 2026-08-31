@@ -32,8 +32,8 @@ var sysInputs = new Dictionary<string, string>
     { "data", System.Text.Json.JsonSerializer.Serialize(new DataObj { item = 17 }) }
 };
 clientFile.SetSysInputs(sysInputs);
-var pdfResult = clientFile.CompilePdf("output_file.pdf");
-Console.WriteLine($"Compiled output_file.pdf from input.typ ({pdfResult.Length} bytes)");
+clientFile.CompilePdf("output_file.pdf");
+Console.WriteLine($"Compiled output_file.pdf from input.typ ({new FileInfo("output_file.pdf").Length} bytes)");
 
 
 Console.WriteLine("\n--- Test 2: Compile from Source String ---");

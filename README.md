@@ -123,6 +123,30 @@ var pngResult = compiler.CompilePng(ppi: 300);
 byte[] page1Png = pngResult[0];
 ```
 
+### Zero-copy output
+
+`CompilePdf()` copies the rendered document onto the managed heap, which puts a multi-megabyte PDF on
+the large object heap. When the document is only on its way to a file, a response body or an upload,
+`CompileToDocument()` hands it over while it is still in the memory Typst allocated:
+
+```csharp
+using var compiler = TypstCompiler.FromSource("= Hello World!");
+using var document = compiler.CompileToDocument();
+
+ReadOnlySpan<byte> pdf = document.GetOutputSpan();   // no copy
+using Stream stream = document.OpenOutputStream();   // no copy, seekable, has a Length
+document.WriteOutputToFile("output.pdf");            // native memory straight to a file handle
+byte[] copy = document.GetOutputBytes();             // an explicit copy, when you need one
+```
+
+The document owns the native memory and must be disposed. Streams from `OpenOutputStream()` keep it
+alive and throw once it is disposed, so passing one to an SDK is safe. Spans from `GetOutputSpan()`
+do not, so they must not outlive the `using` block.
+
+A document is a list of output buffers rather than pages: PDF export produces one buffer for the
+whole document however many pages it has, while PNG and SVG produce one per page. `OutputCount` says
+how many there are, and every accessor takes an output index.
+
 ### Packages
 
 `packagePath` points the compiler at a directory of Typst packages, laid out as

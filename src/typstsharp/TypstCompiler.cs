@@ -305,11 +305,20 @@ public class TypstCompiler : IDisposable
     }
 
     /// <summary>
-    /// Compiles the Typst document.
+    /// Compiles the Typst document and hands back the rendered output while it is still in the memory
+    /// the native library allocated, without copying it onto the managed heap. The caller decides
+    /// whether the bytes are ever copied.
     /// </summary>
-    /// <returns>A <see cref="CompileOutcome"/> containing the compiled document buffers and any warnings.</returns>
+    /// <param name="format">The output format: "pdf", "png" or "svg".</param>
+    /// <param name="ppi">The pixels per inch used for raster output.</param>
+    /// <param name="pdfStandards">Optional PDF standards (e.g. "a-2b", "v-1.7").</param>
+    /// <returns>A <see cref="TypstDocument"/> that must be disposed to release the native memory.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the compilation fails, with the error message from Typst.</exception>
-    public unsafe CompileOutcome Compile(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
+    /// <remarks>
+    /// The returned document is independent of this compiler and stays valid after the compiler has
+    /// been disposed.
+    /// </remarks>
+    public unsafe TypstDocument CompileToDocument(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
     {
         EnsureNotDisposed();
 
@@ -334,39 +343,17 @@ public class TypstCompiler : IDisposable
                     throw new InvalidOperationException(error);
                 }
 
-                var managedBuffers = new List<byte[]>((int)native.buffers_len);
-                if (native.buffers != null)
-                {
-                    for (nuint i = 0; i < native.buffers_len; i++)
-                    {
-                        var buffer = native.buffers[i];
-                        var managed = new byte[checked((int)buffer.len)];
-                        if (buffer.len > 0 && buffer.ptr != null)
-                        {
-                            Marshal.Copy((IntPtr)buffer.ptr, managed, 0, managed.Length);
-                        }
-                        managedBuffers.Add(managed);
-                    }
-                }
-
-                var managedWarnings = new List<string>((int)native.warnings_len);
-                if (native.warnings != null)
-                {
-                    for (nuint i = 0; i < native.warnings_len; i++)
-                    {
-                        var warning = native.warnings[i];
-                        string warningText = warning.message_ptr != null 
-                            ? System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(warning.message_ptr, checked((int)warning.message_len))) 
-                            : string.Empty;
-                        managedWarnings.Add(warningText);
-                    }
-                }
-
-                return new CompileOutcome(managedBuffers, managedWarnings);
+                // From here on the document owns the native result and frees it when disposed.
+                return new TypstDocument(native);
+            }
+            catch
+            {
+                CsBindgen.NativeMethods.free_compile_result(native);
+                throw;
             }
             finally
             {
-                CsBindgen.NativeMethods.free_compile_result(native);
+                // Trims the incremental compilation cache; independent of who owns the buffers.
                 CsBindgen.NativeMethods.reset_world();
             }
         }
@@ -375,6 +362,24 @@ public class TypstCompiler : IDisposable
             if (formatPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(formatPtr);
             if (standardsPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(standardsPtr);
         }
+    }
+
+    /// <summary>
+    /// Compiles the Typst document and copies the rendered output onto the managed heap.
+    /// </summary>
+    /// <returns>A <see cref="CompileOutcome"/> containing the compiled document buffers and any warnings.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the compilation fails, with the error message from Typst.</exception>
+    public CompileOutcome Compile(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
+    {
+        using var document = CompileToDocument(format, ppi, pdfStandards);
+
+        var managedBuffers = new List<byte[]>(document.OutputCount);
+        for (int i = 0; i < document.OutputCount; i++)
+        {
+            managedBuffers.Add(document.GetOutputBytes(i));
+        }
+
+        return new CompileOutcome(managedBuffers, document.Warnings);
     }
 
     /// <summary>
@@ -389,59 +394,69 @@ public class TypstCompiler : IDisposable
     }
 
     /// <summary>
-    /// Compiles the Typst document to a PDF and writes the output directly to a file.
+    /// Compiles the Typst document to a PDF and streams it straight to a file, without
+    /// buffering it on the managed heap.
     /// </summary>
     /// <param name="outputFile">The path of the destination PDF file.</param>
     /// <param name="pdfStandards">Optional PDF standards (e.g. "a-2b", "v-1.7").</param>
-    /// <returns>A <see cref="PdfResult"/> containing the PDF bytes and any warnings.</returns>
-    public PdfResult CompilePdf(string outputFile, IEnumerable<string>? pdfStandards = null)
+    /// <returns>The warnings reported by the Typst compiler.</returns>
+    public IReadOnlyList<string> CompilePdf(string outputFile, IEnumerable<string>? pdfStandards = null)
     {
-        var result = CompilePdf(pdfStandards);
-        result.Save(outputFile);
-        return result;
+        ArgumentException.ThrowIfNullOrEmpty(outputFile);
+
+        using var document = CompileToDocument("pdf", pdfStandards: pdfStandards);
+        document.WriteOutputToFile(outputFile);
+        return document.Warnings;
     }
 
     /// <summary>
-    /// Compiles the Typst document to a PDF and writes the output directly to a file asynchronously.
+    /// Asynchronously compiles the Typst document to a PDF and streams it straight to a file,
+    /// without buffering it on the managed heap.
     /// </summary>
     /// <param name="outputFile">The path of the destination PDF file.</param>
     /// <param name="pdfStandards">Optional PDF standards (e.g. "a-2b", "v-1.7").</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A <see cref="PdfResult"/> containing the PDF bytes and any warnings.</returns>
-    public async Task<PdfResult> CompilePdfAsync(string outputFile, IEnumerable<string>? pdfStandards = null, CancellationToken cancellationToken = default)
+    /// <returns>The warnings reported by the Typst compiler.</returns>
+    public async Task<IReadOnlyList<string>> CompilePdfAsync(string outputFile, IEnumerable<string>? pdfStandards = null, CancellationToken cancellationToken = default)
     {
-        var result = CompilePdf(pdfStandards);
-        await result.SaveAsync(outputFile, cancellationToken).ConfigureAwait(false);
-        return result;
+        ArgumentException.ThrowIfNullOrEmpty(outputFile);
+
+        using var document = CompileToDocument("pdf", pdfStandards: pdfStandards);
+        await document.WriteOutputToFileAsync(outputFile, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return document.Warnings;
     }
 
     /// <summary>
-    /// Compiles the Typst document to a PDF and writes the bytes to a stream.
+    /// Compiles the Typst document to a PDF and writes it to a stream, without buffering it on
+    /// the managed heap.
     /// </summary>
     /// <param name="destination">The destination stream to write the PDF bytes to.</param>
     /// <param name="pdfStandards">Optional PDF standards (e.g. "a-2b", "v-1.7").</param>
-    /// <returns>A <see cref="PdfResult"/> containing the PDF bytes and any warnings.</returns>
-    public PdfResult CompilePdf(Stream destination, IEnumerable<string>? pdfStandards = null)
+    /// <returns>The warnings reported by the Typst compiler.</returns>
+    public IReadOnlyList<string> CompilePdf(Stream destination, IEnumerable<string>? pdfStandards = null)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        var result = CompilePdf(pdfStandards);
-        destination.Write(result.Bytes, 0, result.Bytes.Length);
-        return result;
+
+        using var document = CompileToDocument("pdf", pdfStandards: pdfStandards);
+        document.CopyOutputTo(destination);
+        return document.Warnings;
     }
 
     /// <summary>
-    /// Compiles the Typst document to a PDF and writes the bytes to a stream asynchronously.
+    /// Asynchronously compiles the Typst document to a PDF and writes it to a stream, without
+    /// buffering it on the managed heap.
     /// </summary>
     /// <param name="destination">The destination stream to write the PDF bytes to.</param>
     /// <param name="pdfStandards">Optional PDF standards (e.g. "a-2b", "v-1.7").</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A <see cref="PdfResult"/> containing the PDF bytes and any warnings.</returns>
-    public async Task<PdfResult> CompilePdfAsync(Stream destination, IEnumerable<string>? pdfStandards = null, CancellationToken cancellationToken = default)
+    /// <returns>The warnings reported by the Typst compiler.</returns>
+    public async Task<IReadOnlyList<string>> CompilePdfAsync(Stream destination, IEnumerable<string>? pdfStandards = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        var result = CompilePdf(pdfStandards);
-        await destination.WriteAsync(result.Bytes, cancellationToken).ConfigureAwait(false);
-        return result;
+
+        using var document = CompileToDocument("pdf", pdfStandards: pdfStandards);
+        await document.CopyOutputToAsync(destination, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return document.Warnings;
     }
 
     /// <summary>
@@ -451,11 +466,16 @@ public class TypstCompiler : IDisposable
     /// <returns>A <see cref="SvgResult"/> containing SVG string per page and any warnings.</returns>
     public SvgResult CompileSvg(float ppi = 144.0f)
     {
-        var outcome = Compile(format: "svg", ppi: ppi);
-        var pages = outcome.Buffers
-            .Select(b => System.Text.Encoding.UTF8.GetString(b))
-            .ToList();
-        return new SvgResult(pages, outcome.Warnings);
+        using var document = CompileToDocument(format: "svg", ppi: ppi);
+
+        var pages = new List<string>(document.OutputCount);
+        for (int i = 0; i < document.OutputCount; i++)
+        {
+            // Decoding straight from native memory skips the intermediate byte[] per page.
+            pages.Add(System.Text.Encoding.UTF8.GetString(document.GetOutputSpan(i)));
+        }
+
+        return new SvgResult(pages, document.Warnings);
     }
 
     /// <summary>
@@ -465,8 +485,15 @@ public class TypstCompiler : IDisposable
     /// <returns>A <see cref="PngResult"/> containing PNG bytes per page and any warnings.</returns>
     public PngResult CompilePng(float ppi = 144.0f)
     {
-        var outcome = Compile(format: "png", ppi: ppi);
-        return new PngResult(outcome.Buffers, outcome.Warnings);
+        using var document = CompileToDocument(format: "png", ppi: ppi);
+
+        var pages = new List<byte[]>(document.OutputCount);
+        for (int i = 0; i < document.OutputCount; i++)
+        {
+            pages.Add(document.GetOutputBytes(i));
+        }
+
+        return new PngResult(pages, document.Warnings);
     }
 
     public record TypstWarning(string Message);
@@ -495,22 +522,24 @@ public class TypstCompiler : IDisposable
     /// <param name="ppi">The pixels per inch for the output. This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
     public void Compile(string outputFile, string format, float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
     {
-        var (pages, _) = CompileToPages(format, ppi, pdfStandards);
-        if (pages.Count == 1)
-        {
-            File.WriteAllBytes(outputFile, pages[0]);
-        }
-        else
-        {
-            var extension = Path.GetExtension(outputFile);
-            var fileName = Path.GetFileNameWithoutExtension(outputFile);
-            var directory = Path.GetDirectoryName(outputFile) ?? "";
+        ArgumentException.ThrowIfNullOrEmpty(outputFile);
 
-            for (int i = 0; i < pages.Count; i++)
-            {
-                var pagePath = Path.Combine(directory, $"{fileName}-{i + 1}{extension}");
-                File.WriteAllBytes(pagePath, pages[i]);
-            }
+        using var document = CompileToDocument(format, ppi, pdfStandards);
+        if (document.OutputCount == 1)
+        {
+            document.WriteOutputToFile(outputFile);
+            return;
+        }
+
+        // A format that renders one buffer per page gets a page number appended, so "out.png"
+        // becomes "out-1.png", "out-2.png" and so on.
+        var directory = Path.GetDirectoryName(outputFile) ?? "";
+        var fileName = Path.GetFileNameWithoutExtension(outputFile);
+        var extension = Path.GetExtension(outputFile);
+
+        for (int i = 0; i < document.OutputCount; i++)
+        {
+            document.WriteOutputToFile(Path.Combine(directory, $"{fileName}-{i + 1}{extension}"), i);
         }
     }
 
