@@ -1,6 +1,9 @@
 # Release Notes
 
 ## [Unreleased]
+### Fixed
+- Fixed an input path in a subfolder aborting the process instead of compiling. The path was handed to Typst verbatim, and a Typst virtual path only accepts forward slashes, so on Windows an ordinary relative path such as `templates\letter.typ` panicked inside a native call and took the host process down with it. Paths are now resolved against the project root before being converted, and a path that genuinely leaves the root reports an error instead of panicking. Note that the root is matched against an absolute input path textually, so on Windows both have to be spelled with the same casing.
+
 ### Added
  - Added `compiler.CompileToDocument(...)`, returning a disposable `TypstDocument` that exposes the rendered output while it is still in the memory the native library allocated. `GetOutputSpan`, `OpenOutputStream`, `CopyOutputTo`, `WriteOutputToFile` and `RentOutput` read it without putting a multi-megabyte PDF on the large object heap; `GetOutputBytes` copies when a `byte[]` is what you need.
  - Added easier PDF compilation APIs on `TypstCompiler`:

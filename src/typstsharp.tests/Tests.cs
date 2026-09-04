@@ -50,6 +50,105 @@ public class Tests
         }
     }
 
+    /// <summary>
+    /// A template kept in a subfolder is addressed with the platform's own separator,
+    /// which on Windows is a backslash. Typst's virtual paths only accept forward
+    /// slashes, so the path has to be translated rather than passed through verbatim.
+    /// </summary>
+    [Test]
+    public async Task NestedRelativeInputPathIsCompiled()
+    {
+        using var project = new ProjectDirectory();
+        project.AddTemplate(Path.Combine("templates", "letter.typ"), "= Dear customer");
+
+        using var compiler = TypstCompiler.FromFile(
+            Path.Combine("templates", "letter.typ"),
+            root: project.Path);
+
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Dear customer");
+    }
+
+    /// <summary>
+    /// The same template addressed absolutely resolves to the same document.
+    /// </summary>
+    [Test]
+    public async Task AbsoluteInputPathInsideTheRootIsCompiled()
+    {
+        using var project = new ProjectDirectory();
+        var template = project.AddTemplate(Path.Combine("templates", "letter.typ"), "= Dear customer");
+
+        using var compiler = TypstCompiler.FromFile(template, root: project.Path);
+
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Dear customer");
+    }
+
+    /// <summary>
+    /// Reaching outside the project root has to fail as an exception. The check runs
+    /// inside a native call, where an unwinding panic would abort the whole process
+    /// instead of failing the single request.
+    /// </summary>
+    [Test]
+    public async Task InputPathEscapingTheRootIsRejected()
+    {
+        using var project = new ProjectDirectory();
+        project.AddTemplate("letter.typ", "= Dear customer");
+        var nested = Path.Combine(project.Path, "templates");
+        Directory.CreateDirectory(nested);
+
+        await Assert.That(() =>
+        {
+            using var compiler = TypstCompiler.FromFile(
+                Path.Combine("..", "letter.typ"),
+                root: nested);
+        }).Throws<Exception>()
+        .WithMessageContaining("Failed to create Typst compiler");
+    }
+
+    /// <summary>
+    /// A path that steps out of a subfolder and back in stays inside the root, so it
+    /// resolves rather than being refused.
+    /// </summary>
+    [Test]
+    public async Task InputPathLeavingAndReenteringTheRootIsCompiled()
+    {
+        using var project = new ProjectDirectory();
+        project.AddTemplate("letter.typ", "= Dear customer");
+        project.AddTemplate(Path.Combine("templates", "unused.typ"), "= Unused");
+
+        using var compiler = TypstCompiler.FromFile(
+            Path.Combine("templates", "..", "letter.typ"),
+            root: project.Path);
+
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Dear customer");
+    }
+
+    /// <summary>
+    /// The simplest way to reach this API passes no root at all, which leaves the
+    /// project root at the process working directory. The working directory is
+    /// process-wide state, so this test must not run alongside another.
+    /// </summary>
+    [Test]
+    [NotInParallel]
+    public async Task NestedRelativeInputPathWithoutARootIsCompiled()
+    {
+        using var project = new ProjectDirectory();
+        project.AddTemplate(Path.Combine("templates", "letter.typ"), "= Dear customer");
+
+        var previous = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(project.Path);
+
+            using var compiler = TypstCompiler.FromFile(Path.Combine("templates", "letter.typ"));
+
+            await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Dear customer");
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previous);
+        }
+    }
+
     [Test]
     public async Task CompilePdfToFileAndAsync()
     {
@@ -748,6 +847,33 @@ public class Tests
         }
 
         return sb.ToString();
+    }
+}
+
+/// <summary>
+/// A throwaway project root holding Typst templates, removed when the test ends.
+/// </summary>
+internal sealed class ProjectDirectory : IDisposable
+{
+    public ProjectDirectory() => Directory.CreateDirectory(Path);
+
+    public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"typstsharp-project-{Guid.NewGuid():N}");
+
+    /// <summary>Writes a template at a root-relative path and returns its full path.</summary>
+    public string AddTemplate(string relativePath, string source)
+    {
+        var fullPath = System.IO.Path.Combine(Path, relativePath);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, source);
+        return fullPath;
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(Path))
+        {
+            Directory.Delete(Path, recursive: true);
+        }
     }
 }
 
