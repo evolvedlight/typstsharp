@@ -254,6 +254,98 @@ public class Tests
         await Assert.That(plainText).Contains("After");
     }
 
+    /// <summary>
+    /// PDF/UA-1 is what an obligation to publish accessible documents translates to,
+    /// so it has to be requestable and has to reach the output.
+    /// </summary>
+    [Test]
+    public async Task AccessibilityStandardIsAccepted()
+    {
+        using var compiler = TypstCompiler.FromSource(TaggedSource);
+
+        var pdf = compiler.CompilePdf(pdfStandards: ["ua-1"]);
+
+        await Assert.That(GetXmpMetadata(pdf)).Contains("pdfuaid:part");
+    }
+
+    /// <summary>
+    /// An archival export has to identify itself as one, or an archive validator will
+    /// reject it on ingestion.
+    /// </summary>
+    [Test]
+    public async Task ArchivalStandardIsRecordedInTheDocument()
+    {
+        using var compiler = TypstCompiler.FromSource(TaggedSource);
+
+        var archival = GetXmpMetadata(compiler.CompilePdf(pdfStandards: ["a-2b"]));
+        var plain = GetXmpMetadata(compiler.CompilePdf());
+
+        await Assert.That(archival).Contains("pdfaid:part");
+        // Without the guard the negative assertion would also hold for an empty string.
+        await Assert.That(plain).Contains("<x:xmpmeta");
+        await Assert.That(plain.Contains("pdfaid:part")).IsFalse();
+    }
+
+    /// <summary>
+    /// A document cannot conform to two archival levels at once, so the combination
+    /// has to fail rather than produce a PDF that claims neither.
+    /// </summary>
+    [Test]
+    public async Task ConflictingArchivalStandardsThrow()
+    {
+        await Assert.That(() =>
+        {
+            using var compiler = TypstCompiler.FromSource("Hello world");
+            _ = compiler.CompilePdf(pdfStandards: ["a-1b", "a-2b"]);
+        }).Throws<InvalidOperationException>()
+        .WithMessageContaining("PDF/A");
+    }
+
+    /// <summary>
+    /// An archival level also constrains the PDF version, so asking for a version it
+    /// does not cover is a contradiction rather than a preference. The upstream hints
+    /// name the versions each standard allows, so they are worth carrying through.
+    /// </summary>
+    [Test]
+    public async Task ArchivalStandardConflictingWithThePdfVersionThrows()
+    {
+        var exception = await Assert.That(() =>
+        {
+            using var compiler = TypstCompiler.FromSource(TaggedSource);
+            _ = compiler.CompilePdf(pdfStandards: ["a-1b", "v-2.0"]);
+        }).Throws<InvalidOperationException>();
+
+        await Assert.That(exception!.Message).Contains("not compatible");
+        await Assert.That(exception!.Message).Contains("hint:");
+    }
+
+    /// <summary>
+    /// Two PDF versions at once is the other way a combination contradicts itself.
+    /// </summary>
+    [Test]
+    public async Task ConflictingPdfVersionsThrow()
+    {
+        await Assert.That(() =>
+        {
+            using var compiler = TypstCompiler.FromSource(TaggedSource);
+            _ = compiler.CompilePdf(pdfStandards: ["v-1.4", "v-2.0"]);
+        }).Throws<InvalidOperationException>()
+        .WithMessageContaining("same time");
+    }
+
+    /// <summary>
+    /// A combination that agrees with itself still has to work.
+    /// </summary>
+    [Test]
+    public async Task CompatibleStandardsAreAcceptedTogether()
+    {
+        using var compiler = TypstCompiler.FromSource(TaggedSource);
+
+        var pdf = compiler.CompilePdf(pdfStandards: ["a-2b", "v-1.7"]);
+
+        await Assert.That(GetXmpMetadata(pdf)).Contains("pdfaid:part");
+    }
+
     [Test]
     public async Task InvalidPdfStandardThrowsException()
     {
@@ -733,6 +825,39 @@ public class Tests
         var directory = Path.Combine(Path.GetTempPath(), $"typstsharp-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         return directory;
+    }
+
+    /// <summary>
+    /// A document carrying the title and language that the archival and accessibility
+    /// standards require, so a conformance test exercises the standard rather than
+    /// tripping over unrelated metadata.
+    /// </summary>
+    /// <remarks>
+    /// A fixed date keeps the output reproducible; PDF/A requires the document to
+    /// carry one, and the exporter deliberately does not stamp the current time.
+    /// </remarks>
+    private const string TaggedSource = """
+                                        #set document(
+                                          title: "Conformance test",
+                                          date: datetime(year: 2026, month: 1, day: 1),
+                                        )
+                                        #set text(lang: "en")
+                                        = Conformance test
+                                        """;
+
+    /// <summary>
+    /// Returns the XMP metadata packet, which is where a PDF records the standards it
+    /// conforms to. The packet is XML embedded in the file as Latin-1 bytes.
+    /// </summary>
+    private static string GetXmpMetadata(byte[] pdf)
+    {
+        var content = Encoding.Latin1.GetString(pdf);
+        var start = content.IndexOf("<x:xmpmeta", StringComparison.Ordinal);
+        var end = content.IndexOf("</x:xmpmeta>", StringComparison.Ordinal);
+
+        return start >= 0 && end > start
+            ? content[start..(end + "</x:xmpmeta>".Length)]
+            : string.Empty;
     }
 
     private static string GetPlainText(byte[] pdf)
