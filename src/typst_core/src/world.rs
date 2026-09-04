@@ -86,23 +86,29 @@ impl SystemWorld {
             fonts.extend(typst_kit::fonts::scan(path));
         }
 
-        // Resolve the main file path relative to the root
-        // If the input path is absolute, try to make it relative to the root.
-        // If it's already relative, assume it's relative to the root.
+        // Resolve the main file path relative to the root. A relative input path is
+        // taken to be relative to the root, so joining it onto the root first leaves
+        // `virtualize` with a single job: translate a real path into a virtual one and
+        // check that it stays inside the root.
+        //
+        // Going through `Path` rather than handing the string to `VirtualPath::new`
+        // matters because a virtual path only accepts forward slashes. On Windows the
+        // separator in `templates\letter.typ` is an ordinary one, and `Path` splits on
+        // it; `VirtualPath::new` would instead reject the whole string.
+        //
+        // Input (Windows):  root `C:\app`, path `templates\letter.typ`
+        // Output:           virtual path `/templates/letter.typ`
         let main_id = if let Some(path) = input_path {
-            let relative_path = if path.is_absolute() {
-                path.strip_prefix(&root).map_err(|_| {
-                    eco_format!("input file must be contained in the project root")
-                })?
-            } else {
-                &path
-            };
-            let relative_str = relative_path.to_str().ok_or_else(|| {
-                eco_format!("input file path must be valid UTF-8")
+            let absolute = if path.is_absolute() { path } else { root.join(path) };
+            let virtual_path = VirtualPath::virtualize(&root, &absolute).map_err(|err| {
+                eco_format!("invalid input file path `{}`: {err}", absolute.display())
             })?;
-            RootedPath::new(VirtualRoot::Project, VirtualPath::new(relative_str).unwrap()).intern()
+            RootedPath::new(VirtualRoot::Project, virtual_path).intern()
         } else {
-            FileId::unique(RootedPath::new(VirtualRoot::Project, VirtualPath::new("<main>").unwrap()))
+            FileId::unique(RootedPath::new(
+                VirtualRoot::Project,
+                VirtualPath::new("<main>").expect("`<main>` is a valid virtual path"),
+            ))
         };
 
         let mut slots = HashMap::new();
