@@ -265,6 +265,51 @@ fn make_error_result(msg: impl Into<String>) -> CompileResult {
     }
 }
 
+/// Parses one PDF standard name.
+///
+/// The accepted names are the ones `typst_pdf::PdfStandard` itself serialises to,
+/// rather than a table restated here, so a standard added by a later Typst release is
+/// accepted without a change to this function. `PdfStandard` is `#[non_exhaustive]`,
+/// which makes matching on it exhaustively impossible from outside the crate anyway.
+///
+/// Input:  "a-2b"   Output: PdfStandard::A_2b
+/// Input:  "UA-1"   Output: PdfStandard::Ua_1
+/// Input:  "v-1.7"  Output: PdfStandard::V_1_7
+/// Input:  "a-9z"   Output: None
+/// Input:  "v-a-2b" Output: None
+fn parse_pdf_standard(name: &str) -> Option<typst_pdf::PdfStandard> {
+    fn by_serialised_name(name: &str) -> Option<typst_pdf::PdfStandard> {
+        serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
+    }
+
+    // Standard names are ASCII, so full Unicode case folding would buy nothing.
+    let lowered = name.to_ascii_lowercase();
+
+    // Typst spells the plain PDF versions as bare numbers such as `1.7`, while the
+    // README documents them as `v-1.7`, so the prefix is accepted as an alias. It
+    // only applies to a version number; `v-a-2b` is not a spelling of anything.
+    by_serialised_name(&lowered).or_else(|| {
+        lowered
+            .strip_prefix("v-")
+            .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+            .and_then(by_serialised_name)
+    })
+}
+
+/// Parses the comma-separated list of PDF standards that arrives over the boundary.
+/// Blank entries are ignored, so a trailing comma is not an error.
+///
+/// Input:  " a-2b , ua-1 "  Output: [PdfStandard::A_2b, PdfStandard::Ua_1]
+fn parse_pdf_standards(list: &str) -> Result<Vec<typst_pdf::PdfStandard>, String> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            parse_pdf_standard(name).ok_or_else(|| format!("Invalid PDF standard: {name}"))
+        })
+        .collect()
+}
+
 fn compile_internal(
     compiler: *mut Compiler,
     format_ptr: *const std::os::raw::c_char,
@@ -287,38 +332,10 @@ fn compile_internal(
         unsafe { std::ffi::CStr::from_ptr(pdf_standards).to_str().unwrap_or("") }
     };
 
-    let mut standards = Vec::new();
-    if !standards_str.is_empty() {
-        for s in standards_str.split(',') {
-            let s = s.trim();
-            if !s.is_empty() {
-                let parsed = match s.to_lowercase().as_str() {
-                    "1.4" | "v-1.4" => Some(typst_pdf::PdfStandard::V_1_4),
-                    "1.5" | "v-1.5" => Some(typst_pdf::PdfStandard::V_1_5),
-                    "1.6" | "v-1.6" => Some(typst_pdf::PdfStandard::V_1_6),
-                    "1.7" | "v-1.7" => Some(typst_pdf::PdfStandard::V_1_7),
-                    "2.0" | "v-2.0" => Some(typst_pdf::PdfStandard::V_2_0),
-                    "a-1b" => Some(typst_pdf::PdfStandard::A_1b),
-                    "a-1a" => Some(typst_pdf::PdfStandard::A_1a),
-                    "a-2b" => Some(typst_pdf::PdfStandard::A_2b),
-                    "a-2u" => Some(typst_pdf::PdfStandard::A_2u),
-                    "a-2a" => Some(typst_pdf::PdfStandard::A_2a),
-                    "a-3b" => Some(typst_pdf::PdfStandard::A_3b),
-                    "a-3u" => Some(typst_pdf::PdfStandard::A_3u),
-                    "a-3a" => Some(typst_pdf::PdfStandard::A_3a),
-                    "a-4" => Some(typst_pdf::PdfStandard::A_4),
-                    "a-4f" => Some(typst_pdf::PdfStandard::A_4f),
-                    "a-4e" => Some(typst_pdf::PdfStandard::A_4e),
-                    _ => None,
-                };
-                if let Some(std) = parsed {
-                    standards.push(std);
-                } else {
-                    return make_error_result(format!("Invalid PDF standard: {}", s));
-                }
-            }
-        }
-    }
+    let standards = match parse_pdf_standards(standards_str) {
+        Ok(standards) => standards,
+        Err(message) => return make_error_result(message),
+    };
 
     match compile_inner(&mut compiler.0, format_str, ppi, &standards) {
         Ok((buffers, warnings)) => {
@@ -410,4 +427,90 @@ pub extern "C" fn free_compile_result(result: CompileResult) {
 #[unsafe(no_mangle)]
 pub extern "C" fn reset_world() {
     comemo::evict(10);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_pdf_standard, parse_pdf_standards};
+    use typst_pdf::PdfStandard;
+
+    #[test]
+    fn pdf_versions_are_accepted_bare_and_with_the_v_prefix() {
+        assert_eq!(parse_pdf_standard("1.4"), Some(PdfStandard::V_1_4));
+        assert_eq!(parse_pdf_standard("v-1.4"), Some(PdfStandard::V_1_4));
+        assert_eq!(parse_pdf_standard("1.7"), Some(PdfStandard::V_1_7));
+        assert_eq!(parse_pdf_standard("v-1.7"), Some(PdfStandard::V_1_7));
+        assert_eq!(parse_pdf_standard("2.0"), Some(PdfStandard::V_2_0));
+        assert_eq!(parse_pdf_standard("v-2.0"), Some(PdfStandard::V_2_0));
+    }
+
+    #[test]
+    fn archival_standards_are_accepted() {
+        assert_eq!(parse_pdf_standard("a-1b"), Some(PdfStandard::A_1b));
+        assert_eq!(parse_pdf_standard("a-2b"), Some(PdfStandard::A_2b));
+        assert_eq!(parse_pdf_standard("a-3a"), Some(PdfStandard::A_3a));
+        assert_eq!(parse_pdf_standard("a-4"), Some(PdfStandard::A_4));
+        assert_eq!(parse_pdf_standard("a-4e"), Some(PdfStandard::A_4e));
+    }
+
+    /// The accessibility standard is what an obligation to publish accessible
+    /// documents translates to, and the previous hand-written table left it out.
+    #[test]
+    fn the_accessibility_standard_is_accepted() {
+        assert_eq!(parse_pdf_standard("ua-1"), Some(PdfStandard::Ua_1));
+    }
+
+    #[test]
+    fn names_are_case_insensitive() {
+        assert_eq!(parse_pdf_standard("A-2B"), Some(PdfStandard::A_2b));
+        assert_eq!(parse_pdf_standard("UA-1"), Some(PdfStandard::Ua_1));
+        assert_eq!(parse_pdf_standard("V-1.7"), Some(PdfStandard::V_1_7));
+    }
+
+    #[test]
+    fn unknown_names_are_rejected() {
+        assert_eq!(parse_pdf_standard("nonexistent-standard"), None);
+        assert_eq!(parse_pdf_standard(""), None);
+        // Neither half of the version alias is a standard on its own.
+        assert_eq!(parse_pdf_standard("v-"), None);
+        assert_eq!(parse_pdf_standard("a-9z"), None);
+    }
+
+    /// The `v-` prefix introduces a version number and nothing else, so it must not
+    /// become a second spelling of every standard.
+    #[test]
+    fn the_version_prefix_applies_only_to_version_numbers() {
+        assert_eq!(parse_pdf_standard("v-a-2b"), None);
+        assert_eq!(parse_pdf_standard("v-ua-1"), None);
+        assert_eq!(parse_pdf_standard("v-v-1.7"), None);
+    }
+
+    #[test]
+    fn a_list_is_split_and_trimmed() {
+        assert_eq!(
+            parse_pdf_standards(" a-2b , ua-1 "),
+            Ok(vec![PdfStandard::A_2b, PdfStandard::Ua_1])
+        );
+    }
+
+    /// An empty list is how "no standard requested" arrives, and a stray comma is
+    /// not worth failing a compilation over.
+    #[test]
+    fn blank_entries_are_ignored() {
+        assert_eq!(parse_pdf_standards(""), Ok(vec![]));
+        assert_eq!(parse_pdf_standards("  "), Ok(vec![]));
+        assert_eq!(parse_pdf_standards("a-2b,"), Ok(vec![PdfStandard::A_2b]));
+    }
+
+    #[test]
+    fn the_first_unknown_name_is_reported() {
+        assert_eq!(
+            parse_pdf_standards("a-2b,nonexistent-standard"),
+            Err("Invalid PDF standard: nonexistent-standard".to_owned())
+        );
+        assert_eq!(
+            parse_pdf_standards("nonexistent-standard,a-2b"),
+            Err("Invalid PDF standard: nonexistent-standard".to_owned())
+        );
+    }
 }

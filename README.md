@@ -78,7 +78,8 @@ System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("output
 ```
 
 ### PDF Standards (Typst 0.15+)
-You can export documents using specific PDF standards (like PDF/A or PDF/X) by passing them to `CompilePdf()`. You can even specify multiple standards at once:
+You can export documents using specific PDF standards by passing them to `CompilePdf()`. You can
+specify several at once, as long as they agree with each other:
 
 ```csharp
 using var compiler = TypstCompiler.FromSource("= Archival Document");
@@ -86,6 +87,30 @@ var pdf = compiler.CompilePdf(pdfStandards: new[] { "a-2b", "v-1.7" });
 
 await pdf.SaveAsync("archival.pdf");
 ```
+
+The names are the ones Typst uses: the PDF versions `1.4` to `2.0` (also spelled `v-1.4` to
+`v-2.0`), the archival standards `a-1b`, `a-1a`, `a-2b`, `a-2u`, `a-2a`, `a-3b`, `a-3u`, `a-3a`,
+`a-4`, `a-4f` and `a-4e`, and the accessibility standard `ua-1`. A combination that contradicts
+itself, such as two archival levels or an archival level that does not allow the requested PDF
+version, throws rather than falling back to an ordinary PDF.
+
+Archival and accessibility export place requirements on the document itself. The exporter writes
+no timestamp, so the document has to carry its own date, and PDF/UA additionally needs a title and
+a language:
+
+```csharp
+var source = """
+    #set document(title: "Statement", date: datetime(year: 2026, month: 1, day: 1))
+    #set text(lang: "en")
+    = Statement
+    """;
+
+using var compiler = TypstCompiler.FromSource(source);
+var pdf = compiler.CompilePdf(pdfStandards: new[] { "a-2b", "ua-1" });
+```
+
+Conformance is not validated by this library. If you depend on it, check the output with a
+validator such as veraPDF as part of your own tests.
 
 ### Exporting SVG and PNG Images
 
