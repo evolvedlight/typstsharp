@@ -49,6 +49,13 @@ jobs:
         with:
           package-version: ${{ env.PACKAGE_VERSION }}
 
+      # The Rust tests cover the FFI entry points directly. That is the only place a
+      # panic crossing the boundary shows up as a failing test rather than as a
+      # crashed test runner, so they have to run in their own right.
+      - name: Run native tests
+        shell: bash
+        run: cargo test --manifest-path src/typst_core/Cargo.toml --release
+
       - name: Run tests
         shell: bash
         run: dotnet test --solution typstsharp.slnx
