@@ -910,6 +910,26 @@ public class Tests
         await Assert.That(document.Warnings is string[]).IsFalse();
     }
 
+    /// <summary>
+    /// The warning-free case had no coverage. This pins the public contract rather than the
+    /// allocation, so it holds whichever way the empty list is produced: empty, and not a mutable
+    /// array handed out to callers.
+    /// </summary>
+    [Test]
+    public async Task WarningsFromACleanCompileAreEmptyAndStillImmutable()
+    {
+        using var compiler = TypstCompiler.FromSource("= No warnings here");
+        var document = compiler.CompileToDocument();
+
+        await Assert.That(document.Warnings.Count).IsEqualTo(0);
+        await Assert.That(document.Warnings is string[]).IsFalse();
+
+        document.Dispose();
+
+        // Warnings are copied out of native memory eagerly, so they outlive the document.
+        await Assert.That(document.Warnings.Count).IsEqualTo(0);
+    }
+
     private const string TwoPageSource = """
                                          First page
                                          #pagebreak()
