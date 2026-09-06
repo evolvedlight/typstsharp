@@ -343,6 +343,42 @@ public class Tests
         await Assert.That(ex!.Message).Contains("foo\0bar");
     }
 
+    /// <summary>
+    /// A null pointer tells the native side there is no in-memory source at all, so an empty
+    /// document has to arrive as a real pointer with length 0 rather than as nothing.
+    /// </summary>
+    [Test]
+    public async Task EmptySourceIsDistinguishedFromNoSourceAtAll()
+    {
+        using var compiler = TypstCompiler.FromSource("");
+        using var document = compiler.CompileToDocument();
+
+        await Assert.That(document.GetOutputLength()).IsGreaterThan(0);
+    }
+
+    /// <summary>
+    /// The source crosses the boundary as UTF-8 bytes with an explicit length. A source whose UTF-8
+    /// byte count differs from its char count, and one past the 85,000-byte threshold where the
+    /// array this replaces would have gone to the large object heap, are where a mistake in that
+    /// encoding would surface.
+    /// </summary>
+    [Test]
+    public async Task LargeSourceWithMultiByteCharactersIsCompiledInFull()
+    {
+        var builder = new StringBuilder("= Grüezi mitenand\n\n");
+        for (int i = 0; i < 4000; i++)
+        {
+            builder.Append("Paragraph ").Append(i).Append(" über Zürich.\n\n");
+        }
+        builder.Append("= Schluss\n");
+
+        using var compiler = TypstCompiler.FromSource(builder.ToString());
+        var plainText = GetPlainText(compiler.CompilePdf());
+
+        await Assert.That(plainText).Contains("Grüezi mitenand");
+        await Assert.That(plainText).Contains("Schluss");
+    }
+
     [Test]
     public async Task SourceAfterNullByteIsNotTruncated()
     {

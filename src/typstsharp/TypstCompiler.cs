@@ -235,54 +235,82 @@ public class TypstCompiler : IDisposable
             root = Path.GetDirectoryName(inputPath);
         }
 
-        var inputPathPtr = inputPath != null ? Marshal.StringToCoTaskMemUTF8(inputPath) : IntPtr.Zero;
-
-        // The source goes over as raw UTF-8 bytes with an explicit length. A Typst
-        // document may contain NUL bytes, and a NUL-terminated string would be
-        // silently truncated at the first one.
-        byte[]? inputSourceBytes = null;
-        nuint inputSourceLen = 0;
-        if (inputSource != null)
-        {
-            var encoded = Encoding.UTF8.GetBytes(inputSource);
-            inputSourceLen = (nuint)encoded.Length;
-            // `fixed` over an empty array yields a null pointer, which the native
-            // side reads as "no source at all". A one-byte placeholder keeps an
-            // empty document distinguishable; the length passed stays 0.
-            inputSourceBytes = encoded.Length == 0 ? new byte[1] : encoded;
-        }
-
+        // These pointers are native memory that the finally block below releases, so they are
+        // declared out here and allocated inside the try. Allocating them before it would leak
+        // whatever had been allocated already if a later step threw, and several steps can:
+        // fontPaths may be a lazy sequence supplied by the caller, and sysInputs is serialized.
+        IntPtr inputPathPtr = IntPtr.Zero;
+        IntPtr inputSourcePtr = IntPtr.Zero;
         IntPtr rootPtr = IntPtr.Zero;
-        if (!string.IsNullOrWhiteSpace(root))
-        {
-            rootPtr = Marshal.StringToCoTaskMemUTF8(root);
-        }
-
-        var fontPathsList = fontPaths.ToList();
-        var fontPathPtrs = new IntPtr[fontPathsList.Count];
-        for (int i = 0; i < fontPathsList.Count; i++)
-        {
-            fontPathPtrs[i] = Marshal.StringToCoTaskMemUTF8(fontPathsList[i]);
-        }
-
-        var packagePathPtr = packagePath != null ? Marshal.StringToCoTaskMemUTF8(packagePath) : IntPtr.Zero;
-
-        var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
-        var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
+        IntPtr[] fontPathPtrs = [];
+        IntPtr packagePathPtr = IntPtr.Zero;
+        IntPtr sysInputsPtr = IntPtr.Zero;
+        nuint inputSourceLen = 0;
 
         try
         {
-            fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
-            fixed (byte* inputSourcePtr = inputSourceBytes)
+            if (inputPath != null)
             {
-                IntPtr* fontPathsPtr = fontPathsList.Count == 0 ? null : fontPathsRawPtr;
+                inputPathPtr = Marshal.StringToCoTaskMemUTF8(inputPath);
+            }
+
+            // The source goes over as raw UTF-8 bytes with an explicit length. A Typst
+            // document may contain NUL bytes, and a NUL-terminated string would be
+            // silently truncated at the first one.
+            if (inputSource != null)
+            {
+                // Encoding straight into native memory keeps a document-sized array off the managed
+                // heap; a source of any size would otherwise be copied there, and a large one would
+                // land on the large object heap, only to be garbage as soon as the call returns.
+                int byteCount = Encoding.UTF8.GetByteCount(inputSource);
+
+                // A null pointer reads as "no source at all" on the native side, so an empty
+                // document still needs one real byte behind the pointer; the length stays 0.
+                inputSourcePtr = Marshal.AllocCoTaskMem(byteCount == 0 ? 1 : byteCount);
+                int written = 0;
+                if (byteCount > 0)
+                {
+                    fixed (char* chars = inputSource)
+                    {
+                        written = Encoding.UTF8.GetBytes(chars, inputSource.Length, (byte*)inputSourcePtr, byteCount);
+                    }
+                }
+
+                // The length comes from the encode rather than the count, so the native side can
+                // never be handed a length that reaches past what was written.
+                inputSourceLen = (nuint)written;
+            }
+
+            if (!string.IsNullOrWhiteSpace(root))
+            {
+                rootPtr = Marshal.StringToCoTaskMemUTF8(root);
+            }
+
+            var fontPathsList = fontPaths.ToList();
+            fontPathPtrs = new IntPtr[fontPathsList.Count];
+            for (int i = 0; i < fontPathPtrs.Length; i++)
+            {
+                fontPathPtrs[i] = Marshal.StringToCoTaskMemUTF8(fontPathsList[i]);
+            }
+
+            if (packagePath != null)
+            {
+                packagePathPtr = Marshal.StringToCoTaskMemUTF8(packagePath);
+            }
+
+            var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
+            sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
+
+            fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
+            {
+                IntPtr* fontPathsPtr = fontPathPtrs.Length == 0 ? null : fontPathsRawPtr;
                 _compiler = CsBindgen.NativeMethods.create_compiler(
                     (byte*)rootPtr,
                     (byte*)inputPathPtr,
-                    inputSourcePtr,
+                    (byte*)inputSourcePtr,
                     inputSourceLen,
                     (byte**)fontPathsPtr,
-                    (nuint)fontPathsList.Count,
+                    (nuint)fontPathPtrs.Length,
                     (byte*)packagePathPtr,
                     (byte*)sysInputsPtr,
                     ignoreSystemFonts,
@@ -296,11 +324,14 @@ public class TypstCompiler : IDisposable
         }
         finally
         {
+            // A throw part way through leaves some of these null, and the font path array only
+            // partly filled. FreeCoTaskMem ignores a null pointer, so the loop needs no guard.
             if (rootPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(rootPtr);
             if (inputPathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputPathPtr);
+            if (inputSourcePtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputSourcePtr);
             foreach (var ptr in fontPathPtrs) Marshal.FreeCoTaskMem(ptr);
             if (packagePathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(packagePathPtr);
-            Marshal.FreeCoTaskMem(sysInputsPtr);
+            if (sysInputsPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(sysInputsPtr);
         }
     }
 
