@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
@@ -719,6 +720,175 @@ public class Tests
         await Assert.That(() => stream.ReadByte()).Throws<ObjectDisposedException>();
         await Assert.That(() => stream.Read(new byte[16], 0, 16)).Throws<ObjectDisposedException>();
         await Assert.That(() => stream.Read(new byte[16].AsSpan())).Throws<ObjectDisposedException>();
+    }
+
+    /// <summary>
+    /// A span read must not route through <see cref="Stream.Read(Span{byte})"/>, which serves the read
+    /// from an array rented from the process-wide <see cref="ArrayPool{T}"/> and returns it without
+    /// clearing it. That would leave the rendered document readable by the next unrelated component to
+    /// rent from the same pool, which is exactly what PooledBuffer goes out of its way to prevent.
+    /// </summary>
+    [Test]
+    [NotInParallel]
+    public async Task SpanReadLeavesNoDocumentBytesInTheSharedArrayPool()
+    {
+        using var compiler = TypstCompiler.FromSource("= Not for the next renter");
+        using var document = compiler.CompileToDocument();
+
+        int length = (int)document.GetOutputLength();
+
+        // Prime the pool so that a rent of this size is served from a known array rather than a
+        // fresh allocation. Nothing may await between here and the final rent, or the thread-local
+        // pool slot the priming lands in may not be the one the read and the check see.
+        byte[] primed = ArrayPool<byte>.Shared.Rent(length);
+        primed.AsSpan().Clear();
+        ArrayPool<byte>.Shared.Return(primed);
+
+        using (var stream = document.OpenOutputStream())
+        {
+            stream.ReadExactly(new byte[length]);
+        }
+
+        byte[] afterwards = ArrayPool<byte>.Shared.Rent(length);
+        bool sameArrayCameBack = ReferenceEquals(primed, afterwards);
+        bool carriesTheDocument = afterwards.AsSpan(0, 5).SequenceEqual("%PDF-"u8);
+        ArrayPool<byte>.Shared.Return(afterwards);
+
+        // Getting a different array back means the observation window was lost and the assertion
+        // below would hold for the wrong reason, so fail on that rather than passing green.
+        await Assert.That(sameArrayCameBack).IsTrue();
+        await Assert.That(carriesTheDocument).IsFalse();
+    }
+
+    /// <summary>
+    /// Copying to a response body is the likeliest use of this stream, and Stream.CopyTo stages
+    /// through its own array rented from the shared pool, so the copy needs the same guarantee as
+    /// the span read.
+    /// </summary>
+    [Test]
+    [NotInParallel]
+    public async Task CopyToLeavesNoDocumentBytesInTheSharedArrayPool()
+    {
+        using var compiler = TypstCompiler.FromSource("= Not for the next renter either");
+        using var document = compiler.CompileToDocument();
+
+        // 81920 is the staging buffer size Stream.CopyTo would rent.
+        const int copyBufferSize = 81920;
+        byte[] primed = ArrayPool<byte>.Shared.Rent(copyBufferSize);
+        primed.AsSpan().Clear();
+        ArrayPool<byte>.Shared.Return(primed);
+
+        using (var stream = document.OpenOutputStream())
+        {
+            stream.CopyTo(Stream.Null);
+        }
+
+        byte[] afterwards = ArrayPool<byte>.Shared.Rent(copyBufferSize);
+        bool sameArrayCameBack = ReferenceEquals(primed, afterwards);
+        bool carriesTheDocument = afterwards.AsSpan(0, 5).SequenceEqual("%PDF-"u8);
+        ArrayPool<byte>.Shared.Return(afterwards);
+
+        await Assert.That(sameArrayCameBack).IsTrue();
+        await Assert.That(carriesTheDocument).IsFalse();
+    }
+
+    /// <summary>
+    /// Position may legally be seeked past the end. The remaining length has to be compared before
+    /// it is narrowed to an int: an overshoot of just under 4 GiB wraps to a small positive count
+    /// and would read that far past the end of the native buffer.
+    /// </summary>
+    [Test]
+    public async Task ReadingPastTheEndOfTheBufferReturnsZero()
+    {
+        using var compiler = TypstCompiler.FromSource("= Seeked past the end");
+        using var document = compiler.CompileToDocument();
+
+        using var stream = document.OpenOutputStream();
+        var destination = new byte[4096];
+
+        stream.Position = stream.Length + 1;
+        await Assert.That(stream.Read(destination.AsSpan())).IsEqualTo(0);
+
+        stream.Position = stream.Length + int.MaxValue;
+        await Assert.That(stream.Read(destination.AsSpan())).IsEqualTo(0);
+
+        // The overshoot that wraps to a positive int when narrowed.
+        stream.Position = stream.Length + 4294966296;
+        await Assert.That(stream.Read(destination.AsSpan())).IsEqualTo(0);
+        await Assert.That(stream.Read(destination, 0, destination.Length)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CopyToAsyncMatchesOutputBytes()
+    {
+        using var compiler = TypstCompiler.FromSource("= Copied asynchronously");
+        using var document = compiler.CompileToDocument();
+        var expected = document.GetOutputBytes();
+
+        using var stream = document.OpenOutputStream();
+        using var copy = new MemoryStream();
+        await stream.CopyToAsync(copy);
+
+        await Assert.That(copy.ToArray().SequenceEqual(expected)).IsTrue();
+        await Assert.That(stream.Position).IsEqualTo((long)expected.Length);
+    }
+
+    [Test]
+    public async Task SpanReadReturnsTheWholeBufferAndThenReportsEndOfStream()
+    {
+        using var compiler = TypstCompiler.FromSource("= Read by span");
+        using var document = compiler.CompileToDocument();
+        var expected = document.GetOutputBytes();
+
+        using var stream = document.OpenOutputStream();
+
+        // A span larger than the document is the boundary worth pinning: the read must stop at the
+        // end of the buffer rather than at the end of the span.
+        var oversized = new byte[expected.Length + 64];
+        int read = stream.Read(oversized.AsSpan());
+
+        await Assert.That(read).IsEqualTo(expected.Length);
+        await Assert.That(oversized.AsSpan(0, expected.Length).SequenceEqual(expected)).IsTrue();
+        await Assert.That(stream.Read(oversized.AsSpan())).IsEqualTo(0);
+        await Assert.That(stream.Read(Span<byte>.Empty)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task ChunkedSpanReadsReassembleTheDocument()
+    {
+        using var compiler = TypstCompiler.FromSource(TwoPageSource);
+        using var document = compiler.CompileToDocument();
+        var expected = document.GetOutputBytes();
+
+        using var stream = document.OpenOutputStream();
+        var reassembled = new byte[expected.Length];
+
+        // Chunks that do not divide the length evenly, so the final short read is covered too.
+        const int chunk = 1000;
+        int offset = 0;
+        int read;
+        while ((read = stream.Read(reassembled.AsSpan(offset, Math.Min(chunk, reassembled.Length - offset)))) > 0)
+        {
+            offset += read;
+        }
+
+        await Assert.That(offset).IsEqualTo(expected.Length);
+        await Assert.That(reassembled.SequenceEqual(expected)).IsTrue();
+    }
+
+    [Test]
+    public async Task AsyncReadMatchesOutputBytes()
+    {
+        using var compiler = TypstCompiler.FromSource("= Read asynchronously");
+        using var document = compiler.CompileToDocument();
+        var expected = document.GetOutputBytes();
+
+        using var stream = document.OpenOutputStream();
+        var destination = new byte[expected.Length];
+        int read = await stream.ReadAsync(destination.AsMemory());
+
+        await Assert.That(read).IsEqualTo(expected.Length);
+        await Assert.That(destination.SequenceEqual(expected)).IsTrue();
     }
 
     [Test]
