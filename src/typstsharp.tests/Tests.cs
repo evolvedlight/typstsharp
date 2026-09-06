@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
@@ -341,6 +342,28 @@ public class Tests
         }).Throws<InvalidOperationException>();
 
         await Assert.That(ex!.Message).Contains("foo\0bar");
+    }
+
+    [Test]
+    public async Task SysInputsParameterAcceptsReadOnlyDictionary()
+    {
+        var sysInputs = new ReadOnlyDictionary<string, string>(
+            new Dictionary<string, string> { ["greeting"] = "Hello Inputs" });
+
+        using var compiler = TypstCompiler.FromSource("#sys.inputs.greeting", sysInputs: sysInputs);
+        var plainText = GetPlainText(compiler.CompilePdf());
+        await Assert.That(plainText).Contains("Hello Inputs");
+    }
+
+    [Test]
+    public async Task SetSysInputsAcceptsReadOnlyDictionary()
+    {
+        using var compiler = TypstCompiler.FromSource("#sys.inputs.greeting");
+        compiler.SetSysInputs(new ReadOnlyDictionary<string, string>(
+            new Dictionary<string, string> { ["greeting"] = "Hello Later" }));
+
+        var plainText = GetPlainText(compiler.CompilePdf());
+        await Assert.That(plainText).Contains("Hello Later");
     }
 
     [Test]
