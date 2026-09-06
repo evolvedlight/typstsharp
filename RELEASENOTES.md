@@ -1,6 +1,13 @@
 # Release Notes
 
 ## [Unreleased]
+### Fixed
+- Fixed `ua-1` (PDF/UA-1, the accessibility standard) being rejected by `pdfStandards`. The accepted names are now taken from `typst_pdf::PdfStandard` itself, so every standard Typst supports is accepted, including ones added by later Typst releases. The documented `v-` prefix on plain PDF versions still works, and applies only to them: `v-a-2b` is not a spelling of `a-2b`.
+
+### Changed
+- **Breaking:** an invalid combination of PDF standards now fails the compilation instead of silently producing an ordinary PDF. The validation error from `PdfStandards::new` was discarded and export fell back to the default, so a pipeline could believe it was writing PDF/A while it was not. Combinations such as two PDF/A levels, or a PDF/A level that contradicts the requested PDF version, now throw with the message and hints from Typst. Callers passing a contradictory combination today receive a document and will receive an exception after this change.
+- Note for PDF/A and PDF/UA: the exporter deliberately writes no timestamp, so the document has to carry its own date (`#set document(date: ...)`) and, for PDF/UA, a title and language.
+
 ### Added
  - Added `compiler.CompileToDocument(...)`, returning a disposable `TypstDocument` that exposes the rendered output while it is still in the memory the native library allocated. `GetOutputSpan`, `OpenOutputStream`, `CopyOutputTo`, `WriteOutputToFile` and `RentOutput` read it without putting a multi-megabyte PDF on the large object heap; `GetOutputBytes` copies when a `byte[]` is what you need.
  - Added easier PDF compilation APIs on `TypstCompiler`:

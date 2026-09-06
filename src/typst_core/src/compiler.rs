@@ -48,12 +48,32 @@ pub fn export_pdf(
     document: &PagedDocument,
     standards: &[typst_pdf::PdfStandard],
 ) -> StrResult<Vec<u8>> {
+    // An invalid combination, such as two PDF/A levels or a PDF/A level that
+    // contradicts the requested PDF version, has to fail the export. Falling back to
+    // the default would hand back an ordinary PDF while reporting success, and the
+    // missing conformance would surface only when an archive validator rejects the
+    // document, long after it was produced.
+    let standards = typst_pdf::PdfStandards::new(standards).map_err(|err| {
+        let hints = err
+            .hints()
+            .iter()
+            .map(|hint| hint.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        if hints.is_empty() {
+            err.message().clone()
+        } else {
+            eco_format!("{} (hint: {})", err.message(), hints)
+        }
+    })?;
+
     let buffer = typst_pdf::pdf(
         document,
         &typst_pdf::PdfOptions {
             ident: typst::foundations::Smart::Auto,
             timestamp: None, // For reproducible builds
-            standards: typst_pdf::PdfStandards::new(standards).unwrap_or_default(),
+            standards,
             ..Default::default()
         },
     )
