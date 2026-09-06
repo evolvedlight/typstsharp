@@ -114,7 +114,7 @@ impl SystemWorld {
         let mut slots = HashMap::new();
         if let Some(content) = input_content {
             let mut main_slot = FileSlot::new(main_id);
-            main_slot.source.init(Source::new(main_id, content));
+            main_slot.source.init_in_memory(Source::new(main_id, content));
             slots.insert(main_id, main_slot);
         }
 
@@ -172,8 +172,25 @@ impl SystemWorld {
         Ok(())
     }
 
-    /// Resets the cached date/time between compilations.
-    pub fn reset_time(&mut self) {
+    /// Prepares the world for a new compilation.
+    ///
+    /// Drops the cached date/time and marks every file slot as not yet accessed, so
+    /// the next access reads the file from disk again. A compiler is meant to be kept
+    /// alive across compilations for its incremental cache, and one that held on to
+    /// the content each file had when it was first read would go on rendering a
+    /// template that has since been rewritten, and give no sign of it.
+    ///
+    /// Slots holding a document that was handed over in memory keep it: there is no
+    /// file behind them to read.
+    ///
+    /// The lock is taken rather than reached past with `Mutex::get_mut`: `slot` below
+    /// inserts into the map and can reallocate it, and the only thing keeping that off
+    /// another thread is the caller honouring the rule that a compiler belongs to one
+    /// thread.
+    pub fn reset(&mut self) {
+        for slot in self.slots.lock().unwrap().values_mut() {
+            slot.reset();
+        }
         self.now.reset();
     }
 
@@ -228,6 +245,19 @@ impl FileSlot {
             |data, _| Ok(Bytes::new(data)),
         )
     }
+
+    /// Sends both views of the file back to disk for the next compilation.
+    ///
+    /// Package files are included. A package addressed with a fixed version cannot
+    /// legitimately change under it, but a deployment that vendors its templates as
+    /// local packages redeploys them exactly the way it redeploys a bare `.typ`, and
+    /// that is the case this exists for. A package that failed to resolve is looked up
+    /// again for the same reason: one that is vendored afterwards starts working,
+    /// rather than staying broken for the life of the compiler.
+    fn reset(&mut self) {
+        self.source.reset();
+        self.file.reset();
+    }
 }
 
 fn system_path(
@@ -248,6 +278,9 @@ struct SlotCell<T> {
     data: Option<FileResult<T>>,
     fingerprint: u128,
     accessed: bool,
+    /// Whether the value was handed over rather than read from a file. Such a cell
+    /// has no path behind it, so it is the one thing a reset must not invalidate.
+    in_memory: bool,
 }
 
 impl<T: Clone> SlotCell<T> {
@@ -256,12 +289,31 @@ impl<T: Clone> SlotCell<T> {
             data: None,
             fingerprint: 0,
             accessed: false,
+            in_memory: false,
         }
     }
 
-    fn init(&mut self, data: T) {
+    /// Fills the cell with a value that did not come from a file, and pins it there.
+    ///
+    /// Only a caller that has the content in hand may use this: the cell keeps the
+    /// value for the lifetime of the world, because a reset has no file to send it
+    /// back to.
+    fn init_in_memory(&mut self, data: T) {
         self.data = Some(Ok(data));
         self.accessed = true;
+        self.in_memory = true;
+    }
+
+    /// Sends the cell back to the file for the next compilation, unless it holds a
+    /// value that was handed over rather than read.
+    ///
+    /// The cached value and its fingerprint are kept either way: if the file turns
+    /// out to be unchanged, the value is handed out again instead of being decoded a
+    /// second time, which is what keeps recompiling an unchanged document cheap.
+    fn reset(&mut self) {
+        if !self.in_memory {
+            self.accessed = false;
+        }
     }
 
     fn get_or_init(
@@ -305,4 +357,113 @@ fn decode_utf8(buf: &[u8]) -> FileResult<&str> {
     Ok(std::str::from_utf8(
         buf.strip_prefix(b"\xef\xbb\xbf").unwrap_or(buf),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    /// A throwaway directory, removed when the test ends.
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            // A counter keeps parallel tests apart without pulling in a temp-file crate.
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+
+            let path = std::env::temp_dir().join(format!(
+                "typst_core-slot-{}-{}-{}",
+                name,
+                std::process::id(),
+                unique
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        /// Writes a file into the directory and returns its path.
+        fn write(&self, name: &str, content: &str) -> PathBuf {
+            let file = self.path.join(name);
+            std::fs::write(&file, content).unwrap();
+            file
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// A cell holds its value until it is reset, and then reports whatever the file
+    /// says. Decoding is the expensive half of a read, so it has to happen only when
+    /// the content has actually changed: the fingerprint is what tells the two apart.
+    #[test]
+    fn a_reset_cell_re_reads_the_file_but_decodes_only_what_changed() {
+        let dir = TempDir::new("re-read");
+        let path = dir.write("note.txt", "first");
+
+        let decodes = Cell::new(0usize);
+        let decode = |data: Vec<u8>, _: Option<String>| {
+            decodes.set(decodes.get() + 1);
+            Ok(String::from_utf8(data).unwrap())
+        };
+        let mut cell = SlotCell::<String>::new();
+
+        assert_eq!(cell.get_or_init(|| Ok(path.clone()), decode).unwrap(), "first");
+        assert_eq!(decodes.get(), 1);
+
+        // Within one compilation the file is read once, however often it is asked for.
+        std::fs::write(&path, "second").unwrap();
+        assert_eq!(cell.get_or_init(|| Ok(path.clone()), decode).unwrap(), "first");
+        assert_eq!(decodes.get(), 1);
+
+        cell.reset();
+        assert_eq!(cell.get_or_init(|| Ok(path.clone()), decode).unwrap(), "second");
+        assert_eq!(decodes.get(), 2);
+
+        cell.reset();
+        assert_eq!(cell.get_or_init(|| Ok(path.clone()), decode).unwrap(), "second");
+        assert_eq!(decodes.get(), 2, "an unchanged file was decoded a second time");
+    }
+
+    /// A failed read is cached like a successful one, so a file that appears later has
+    /// to be picked up rather than reported missing forever.
+    #[test]
+    fn a_reset_cell_picks_up_a_file_that_did_not_exist_yet() {
+        let dir = TempDir::new("appearing");
+        let path = dir.path.join("late.txt");
+
+        let decode = |data: Vec<u8>, _: Option<String>| Ok(String::from_utf8(data).unwrap());
+        let mut cell = SlotCell::<String>::new();
+
+        assert!(cell.get_or_init(|| Ok(path.clone()), decode).is_err());
+
+        std::fs::write(&path, "here now").unwrap();
+        cell.reset();
+
+        assert_eq!(cell.get_or_init(|| Ok(path.clone()), decode).unwrap(), "here now");
+    }
+
+    /// A value that was handed over has no file behind it, so a reset must leave it
+    /// alone. Both closures fail the test if the cell goes looking for one.
+    #[test]
+    fn an_in_memory_cell_is_untouched_by_a_reset() {
+        let mut cell = SlotCell::<String>::new();
+        cell.init_in_memory("handed over".to_string());
+
+        cell.reset();
+
+        let value = cell.get_or_init(
+            || panic!("an in-memory cell must not be resolved to a path"),
+            |_, _| unreachable!("an in-memory cell must not be decoded"),
+        );
+        assert_eq!(value.unwrap(), "handed over");
+    }
 }

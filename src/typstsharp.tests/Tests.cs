@@ -149,6 +149,50 @@ public class Tests
         }
     }
 
+    /// <summary>
+    /// Caching a compiler is the recommended way to serve documents, and templates get
+    /// redeployed underneath a long-running process. A compiler that pinned the content
+    /// it read first would keep rendering the retired template with no error to show for
+    /// it.
+    /// </summary>
+    [Test]
+    public async Task ReusedCompilerRendersATemplateRewrittenOnDisk()
+    {
+        using var project = new ProjectDirectory();
+        project.AddTemplate("letter.typ", "= Dear customer");
+
+        using var compiler = TypstCompiler.FromFile("letter.typ", root: project.Path);
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Dear customer");
+
+        project.AddTemplate("letter.typ", "= Dear supplier");
+
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Dear supplier");
+    }
+
+    /// <summary>
+    /// A template is usually split across files, and the imports are read through the
+    /// same mechanism as the main file.
+    /// </summary>
+    [Test]
+    public async Task ReusedCompilerRendersAnImportRewrittenOnDisk()
+    {
+        const string letter = """
+                              #import "salutation.typ": salutation
+                              = #salutation
+                              """;
+
+        using var project = new ProjectDirectory();
+        project.AddTemplate("letter.typ", letter);
+        project.AddTemplate("salutation.typ", "#let salutation = \"Dear customer\"");
+
+        using var compiler = TypstCompiler.FromFile("letter.typ", root: project.Path);
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Dear customer");
+
+        project.AddTemplate("salutation.typ", "#let salutation = \"Dear supplier\"");
+
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Dear supplier");
+    }
+
     [Test]
     public async Task CompilePdfToFileAndAsync()
     {
@@ -477,6 +521,32 @@ public class Tests
         var plainText = GetPlainText(compiler.Compile().Buffers[0]);
 
         await Assert.That(plainText).Contains("Hello from a bundled package");
+    }
+
+    /// <summary>
+    /// A deployment that vendors its templates as local packages redeploys them the same
+    /// way it redeploys a bare .typ file, so a reused compiler has to pick up the new
+    /// contents of a package it has already resolved.
+    /// </summary>
+    [Test]
+    public async Task ReusedCompilerRendersABundledPackageRewrittenOnDisk()
+    {
+        using var packages = new PackageDirectory();
+        packages.AddPackage("local", "greet", "0.1.0", "#let greet() = [Hello from the first version]");
+
+        using var compiler = TypstCompiler.FromSource(
+            """
+            #import "@local/greet:0.1.0": greet
+            #greet()
+            """,
+            packagePath: packages.Path,
+            includeSystemPackages: false);
+
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Hello from the first version");
+
+        packages.AddPackage("local", "greet", "0.1.0", "#let greet() = [Hello from the second version]");
+
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Hello from the second version");
     }
 
     /// <summary>
