@@ -8,18 +8,20 @@ fn compiler_for(source: &[u8]) -> *mut Compiler {
     let root = CString::new(".").unwrap();
     let sys_inputs = CString::new("{}").unwrap();
 
-    let compiler = create_compiler(
-        root.as_ptr(),
-        std::ptr::null(),
-        source.as_ptr(),
-        source.len(),
-        std::ptr::null::<*const c_char>(),
-        0,
-        std::ptr::null(),
-        sys_inputs.as_ptr(),
-        true,
-        true,
-    );
+    let compiler = unsafe {
+        create_compiler(
+            root.as_ptr(),
+            std::ptr::null(),
+            source.as_ptr(),
+            source.len(),
+            std::ptr::null::<*const c_char>(),
+            0,
+            std::ptr::null(),
+            sys_inputs.as_ptr(),
+            true,
+            true,
+        )
+    };
     assert!(!compiler.is_null(), "failed to create compiler");
     compiler
 }
@@ -28,7 +30,7 @@ fn compiler_for(source: &[u8]) -> *mut Compiler {
 fn compile_expecting_error(source: &[u8]) -> String {
     let compiler = compiler_for(source);
 
-    let result = compile(compiler, std::ptr::null(), 96.0, std::ptr::null());
+    let result = unsafe { compile(compiler, std::ptr::null(), 96.0, std::ptr::null()) };
     assert!(
         !result.error_ptr.is_null(),
         "invalid document compiled without an error"
@@ -39,8 +41,10 @@ fn compile_expecting_error(source: &[u8]) -> String {
         String::from_utf8_lossy(slice).into_owned()
     };
 
-    free_compile_result(result);
-    free_compiler(compiler);
+    unsafe {
+        free_compile_result(result);
+        free_compiler(compiler);
+    }
 
     dbg!(&error);
     error
