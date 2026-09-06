@@ -34,6 +34,13 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
+    /// <remarks>
+    /// The compiler may be kept and compiled repeatedly, which is what makes its incremental
+    /// cache worthwhile. Each compilation reads the file, and everything it imports, from disk
+    /// again, so a template rewritten underneath a running process takes effect. Write templates
+    /// atomically: a compilation that lands halfway through a plain overwrite renders whatever
+    /// the file held at that moment.
+    /// </remarks>
     public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
         : this(inputPath, null, fonts, sysInputs, root, packagePath, includeSystemPackages)
     {
@@ -72,6 +79,13 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
+    /// <remarks>
+    /// The compiler may be kept and compiled repeatedly, which is what makes its incremental
+    /// cache worthwhile. Each compilation reads the file, and everything it imports, from disk
+    /// again, so a template rewritten underneath a running process takes effect. Write templates
+    /// atomically: a compilation that lands halfway through a plain overwrite renders whatever
+    /// the file held at that moment.
+    /// </remarks>
     public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
         return new TypstCompiler(path, null, fonts, sysInputs, root, packagePath, includeSystemPackages);
