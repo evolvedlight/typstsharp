@@ -323,27 +323,62 @@ public sealed class TypstDocument : IDisposable
     /// <see cref="UnmanagedMemoryStream"/> would let the document be finalized, and its memory freed,
     /// while the stream was still being read.
     /// </summary>
-    private sealed unsafe class OutputStream : UnmanagedMemoryStream
+    private sealed class OutputStream : UnmanagedMemoryStream
     {
         private readonly TypstDocument _owner;
+        private readonly unsafe byte* _pointer;
 
-        internal OutputStream(TypstDocument owner, byte* pointer, long length)
+        internal unsafe OutputStream(TypstDocument owner, byte* pointer, long length)
             : base(pointer, length, length, FileAccess.Read)
         {
             _owner = owner;
+            _pointer = pointer;
         }
 
-        // Only the byte-array reads are overridden. Every other read path on Stream and
-        // UnmanagedMemoryStream, span and async alike, ends up calling one of these two, so this
-        // covers them all. Overriding Read(Span) as well would recurse: the UnmanagedMemoryStream
-        // override delegates to Stream.Read(Span) for any derived type, and that implementation
-        // calls back into Read(byte[]).
-        public override int Read(byte[] buffer, int offset, int count)
+        /// <summary>
+        /// Copies straight out of the native buffer, which is what keeps the span-shaped and
+        /// asynchronous read paths off the managed heap.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="UnmanagedMemoryStream"/> only takes its own direct path when the runtime type is
+        /// exactly <see cref="UnmanagedMemoryStream"/>; for a derived type it defers to
+        /// <see cref="Stream.Read(Span{byte})"/>, which rents an array at least the size of the
+        /// caller's span from the shared <see cref="ArrayPool{T}"/>, reads into it, copies it out, and
+        /// returns it to the pool without clearing it. That costs a second copy of every byte and,
+        /// worse, leaves the rendered document in a process-wide pool for whatever rents from it next,
+        /// which is the very thing <c>PooledBuffer</c> clears its buffer to avoid. Reading the pointer
+        /// here sidesteps both. It does not recurse: recursion would need a call back into
+        /// <c>base.Read(Span)</c>.
+        /// </remarks>
+        public override unsafe int Read(Span<byte> buffer)
         {
             ObjectDisposedException.ThrowIf(_owner.IsDisposed, _owner);
-            int read = base.Read(buffer, offset, count);
+
+            long position = Position;
+
+            // The remaining length has to be tested before it is narrowed, not after. Position may
+            // legally be seeked past the end, and narrowing a large negative long wraps back to a
+            // positive int: an overshoot of just under 4 GiB would otherwise yield a small positive
+            // count and read that far past the end of the buffer.
+            long available = Length - position;
+            if (available <= 0 || buffer.IsEmpty)
+            {
+                return 0;
+            }
+
+            int count = (int)Math.Min((long)buffer.Length, available);
+            new ReadOnlySpan<byte>(_pointer + position, count).CopyTo(buffer);
+            Position = position + count;
             GC.KeepAlive(_owner);
-            return read;
+            return count;
+        }
+
+        // The array-shaped and asynchronous read paths funnel into Read(Span) above. ReadByte is the
+        // exception, and deliberately so: the base already serves it straight from the pointer.
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            ValidateBufferArguments(buffer, offset, count);
+            return Read(new Span<byte>(buffer, offset, count));
         }
 
         public override int ReadByte()
@@ -353,5 +388,63 @@ public sealed class TypstDocument : IDisposable
             GC.KeepAlive(_owner);
             return value;
         }
+
+        /// <summary>
+        /// Writes what is left of the buffer in a single call.
+        /// </summary>
+        /// <remarks>
+        /// Neither <see cref="UnmanagedMemoryStream"/> nor this type would otherwise override the
+        /// copy, so it would fall to <see cref="Stream"/>, which stages the document through an
+        /// 81920-byte array rented from the shared <see cref="ArrayPool{T}"/> and returned to it
+        /// uncleared. That is the same disclosure the span read above avoids, and copying a document
+        /// to a response body is the most likely thing a caller does with this stream.
+        /// </remarks>
+        public override unsafe void CopyTo(Stream destination, int bufferSize)
+        {
+            ValidateCopyToArguments(destination, bufferSize);
+            ObjectDisposedException.ThrowIf(_owner.IsDisposed, _owner);
+
+            long position = Position;
+            long remaining = Length - position;
+            while (remaining > 0)
+            {
+                // A single write per chunk, so only a buffer larger than int.MaxValue loops at all.
+                int chunk = (int)Math.Min(remaining, int.MaxValue);
+                destination.Write(new ReadOnlySpan<byte>(_pointer + position, chunk));
+                position += chunk;
+                remaining -= chunk;
+                Position = position;
+            }
+
+            GC.KeepAlive(_owner);
+        }
+
+        /// <inheritdoc cref="CopyTo(Stream, int)"/>
+        public override async Task CopyToAsync(Stream destination, int bufferSize, CancellationToken cancellationToken)
+        {
+            ValidateCopyToArguments(destination, bufferSize);
+            ObjectDisposedException.ThrowIf(_owner.IsDisposed, _owner);
+
+            long position = Position;
+            long remaining = Length - position;
+            while (remaining > 0)
+            {
+                int chunk = (int)Math.Min(remaining, int.MaxValue);
+                using var manager = CreateBufferManager(position, chunk);
+                await destination.WriteAsync(manager.Memory, cancellationToken).ConfigureAwait(false);
+                position += chunk;
+                remaining -= chunk;
+                Position = position;
+            }
+
+            GC.KeepAlive(_owner);
+        }
+
+        /// <summary>
+        /// Builds the <see cref="Memory{T}"/> view the asynchronous copy hands to the destination. It
+        /// needs its own method because a pointer cannot be used inside an asynchronous one.
+        /// </summary>
+        private unsafe NativeBufferMemoryManager CreateBufferManager(long position, int length) =>
+            new(_owner, _pointer + position, length);
     }
 }
