@@ -34,7 +34,7 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
-    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    public TypstCompiler(string inputPath, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
         : this(inputPath, null, fonts, sysInputs, root, packagePath, includeSystemPackages)
     {
     }
@@ -53,7 +53,7 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    public static TypstCompiler FromSource(string source, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
         return new TypstCompiler(null, source, fonts, sysInputs, root, packagePath, includeSystemPackages);
     }
@@ -72,7 +72,7 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    public static TypstCompiler FromFile(string path, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
         return new TypstCompiler(path, null, fonts, sysInputs, root, packagePath, includeSystemPackages);
     }
@@ -91,7 +91,7 @@ public class TypstCompiler : IDisposable
     public static PdfResult CompilePdf(
         string source,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true,
@@ -115,7 +115,7 @@ public class TypstCompiler : IDisposable
     public static PdfResult CompilePdfFromFile(
         string path,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true,
@@ -140,7 +140,7 @@ public class TypstCompiler : IDisposable
         string source,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -164,7 +164,7 @@ public class TypstCompiler : IDisposable
         string path,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -188,7 +188,7 @@ public class TypstCompiler : IDisposable
         string source,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -212,7 +212,7 @@ public class TypstCompiler : IDisposable
         string path,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -223,7 +223,7 @@ public class TypstCompiler : IDisposable
 
     
 
-    private unsafe TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root, string? packagePath = null, bool includeSystemPackages = true)
+    private unsafe TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, IDictionary<string, string>? sysInputs, string? root, string? packagePath = null, bool includeSystemPackages = true)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? [];
@@ -267,7 +267,7 @@ public class TypstCompiler : IDisposable
 
         var packagePathPtr = packagePath != null ? Marshal.StringToCoTaskMemUTF8(packagePath) : IntPtr.Zero;
 
-        var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
+        var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<IDictionary<string, string>>(sysInputs, sourceGenOptions);
         var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
 
         try
@@ -548,11 +548,11 @@ public class TypstCompiler : IDisposable
     /// </summary>
     /// <param name="inputs">A dictionary of key-value pairs. Values are serialized to JSON and passed to the compiler.</param>
     /// <exception cref="Exception">Thrown if the inputs fail to be set in the native compiler.</exception>
-    public unsafe void SetSysInputs(Dictionary<string, string> inputs)
+    public unsafe void SetSysInputs(IDictionary<string, string> inputs)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
 
-        var sysInputsJson = JsonSerializer.Serialize<Dictionary<string, string>>(inputs, sourceGenOptions);
+        var sysInputsJson = JsonSerializer.Serialize<IDictionary<string, string>>(inputs, sourceGenOptions);
         var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
         try
         {

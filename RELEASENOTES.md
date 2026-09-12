@@ -10,6 +10,7 @@
 - Note for PDF/A and PDF/UA: the exporter deliberately writes no timestamp, so the document has to carry its own date (`#set document(date: ...)`) and, for PDF/UA, a title and language.
 - `compiler.CompilePdf(Stream)`, `compiler.CompilePdfAsync(Stream)`, `compiler.CompilePdf(string outputFile)` and `compiler.CompilePdfAsync(string outputFile)` now stream the document straight from native memory to the destination and return the compiler warnings, rather than returning a `PdfResult` that had to be materialised on the managed heap first. Use `compiler.CompilePdf()` when you want the bytes.
 - `compiler.Compile(outputFile, format)` and `compiler.CompileSvg(...)` no longer copy the rendered output onto the managed heap before writing or decoding it.
+- `sysInputs` parameters on `TypstCompiler` and the `SetSysInputs` argument are now `IDictionary<string, string>` instead of `Dictionary<string, string>`, so a `ReadOnlyDictionary<string, string>`, `ImmutableDictionary<string, string>` or any other implementation can be passed. Existing calls that pass a `Dictionary<string, string>` are unaffected.
 
 ### Added
  - Added `compiler.CompileToDocument(...)`, returning a disposable `TypstDocument` that exposes the rendered output while it is still in the memory the native library allocated. `GetOutputSpan`, `OpenOutputStream`, `CopyOutputTo`, `WriteOutputToFile` and `RentOutput` read it without putting a multi-megabyte PDF on the large object heap; `GetOutputBytes` copies when a `byte[]` is what you need.
