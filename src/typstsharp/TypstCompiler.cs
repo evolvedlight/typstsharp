@@ -174,6 +174,54 @@ public class TypstCompiler : IDisposable
     }
 
     /// <summary>
+    /// Compiles Typst source code to a single SVG holding every page, stacked top to bottom.
+    /// </summary>
+    /// <param name="source">The Typst source code.</param>
+    /// <param name="gapInPoints">The distance between neighbouring pages, in points.</param>
+    /// <param name="fonts">Font settings.</param>
+    /// <param name="sysInputs">System inputs.</param>
+    /// <param name="root">Root directory.</param>
+    /// <param name="packagePath">Directory that packages are resolved from.</param>
+    /// <param name="includeSystemPackages">Whether machine-wide package directories and Typst Universe registry may be used.</param>
+    /// <returns>A <see cref="SvgResult"/> containing the merged SVG as its only page, and any warnings.</returns>
+    public static SvgResult CompileMergedSvg(
+        string source,
+        float gapInPoints = 0f,
+        Fonts? fonts = null,
+        Dictionary<string, string>? sysInputs = null,
+        string? root = null,
+        string? packagePath = null,
+        bool includeSystemPackages = true)
+    {
+        using var compiler = FromSource(source, fonts, sysInputs, root, packagePath, includeSystemPackages);
+        return compiler.CompileMergedSvg(gapInPoints);
+    }
+
+    /// <summary>
+    /// Compiles a Typst source file to a single SVG holding every page, stacked top to bottom.
+    /// </summary>
+    /// <param name="path">The path to the Typst file.</param>
+    /// <param name="gapInPoints">The distance between neighbouring pages, in points.</param>
+    /// <param name="fonts">Font settings.</param>
+    /// <param name="sysInputs">System inputs.</param>
+    /// <param name="root">Root directory.</param>
+    /// <param name="packagePath">Directory that packages are resolved from.</param>
+    /// <param name="includeSystemPackages">Whether machine-wide package directories and Typst Universe registry may be used.</param>
+    /// <returns>A <see cref="SvgResult"/> containing the merged SVG as its only page, and any warnings.</returns>
+    public static SvgResult CompileMergedSvgFromFile(
+        string path,
+        float gapInPoints = 0f,
+        Fonts? fonts = null,
+        Dictionary<string, string>? sysInputs = null,
+        string? root = null,
+        string? packagePath = null,
+        bool includeSystemPackages = true)
+    {
+        using var compiler = FromFile(path, fonts, sysInputs, root, packagePath, includeSystemPackages);
+        return compiler.CompileMergedSvg(gapInPoints);
+    }
+
+    /// <summary>
     /// Compiles Typst source code directly to PNG format.
     /// </summary>
     /// <param name="source">The Typst source code.</param>
@@ -309,18 +357,26 @@ public class TypstCompiler : IDisposable
     /// the native library allocated, without copying it onto the managed heap. The caller decides
     /// whether the bytes are ever copied.
     /// </summary>
-    /// <param name="format">The output format: "pdf", "png" or "svg".</param>
+    /// <param name="format">
+    /// The output format: "pdf", "png", "svg", or "svg-merged" for a single SVG holding every page.
+    /// </param>
     /// <param name="ppi">The pixels per inch used for raster output.</param>
     /// <param name="pdfStandards">Optional PDF standards (e.g. "a-2b", "v-1.7").</param>
+    /// <param name="mergedGap">The distance between neighbouring pages in a merged SVG, in points.</param>
     /// <returns>A <see cref="TypstDocument"/> that must be disposed to release the native memory.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown if <paramref name="mergedGap"/> is negative, infinite or NaN.</exception>
     /// <exception cref="InvalidOperationException">Thrown if the compilation fails, with the error message from Typst.</exception>
     /// <remarks>
     /// The returned document is independent of this compiler and stays valid after the compiler has
     /// been disposed.
     /// </remarks>
-    public unsafe TypstDocument CompileToDocument(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
+    public unsafe TypstDocument CompileToDocument(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null, float mergedGap = 0f)
     {
         EnsureNotDisposed();
+        if (!float.IsFinite(mergedGap) || mergedGap < 0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(mergedGap), mergedGap, "The gap between merged SVG pages must be a finite, non-negative number of points.");
+        }
 
         IntPtr formatPtr = Marshal.StringToCoTaskMemUTF8(format);
         string standardsStr = pdfStandards != null ? string.Join(",", pdfStandards) : "";
@@ -328,7 +384,7 @@ public class TypstCompiler : IDisposable
 
         try
         {
-            var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, (byte*)standardsPtr);
+            var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, mergedGap, (byte*)standardsPtr);
 
             // The P/Invoke is a preemptive-mode transition, so a collection can run while Typst is
             // compiling. `this` is dead from the field load above onwards, so without this the
@@ -479,6 +535,20 @@ public class TypstCompiler : IDisposable
     }
 
     /// <summary>
+    /// Compiles the Typst document to a single SVG holding every page, stacked top to bottom with
+    /// <paramref name="gapInPoints"/> points between them. The image is as wide as the widest page.
+    /// </summary>
+    /// <param name="gapInPoints">The distance between neighbouring pages, in points.</param>
+    /// <returns>A <see cref="SvgResult"/> containing the merged SVG as its only page, and any warnings.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown if <paramref name="gapInPoints"/> is negative, infinite or NaN.</exception>
+    public SvgResult CompileMergedSvg(float gapInPoints = 0f)
+    {
+        using var document = CompileToDocument(format: "svg-merged", mergedGap: gapInPoints);
+        var svg = System.Text.Encoding.UTF8.GetString(document.GetOutputSpan());
+        return new SvgResult([svg], document.Warnings);
+    }
+
+    /// <summary>
     /// Compiles the Typst document to PNG image byte buffers (one per page).
     /// </summary>
     /// <param name="ppi">The pixels per inch resolution for the PNG export.</param>
@@ -518,13 +588,15 @@ public class TypstCompiler : IDisposable
     /// Compiles the Typst document and writes the output to one or more files.
     /// </summary>
     /// <param name="outputFile">The path for the output file. If the document has multiple pages, a page number will be appended to the file name for each page.</param>
-    /// <param name="format">The output format (e.g., "pdf"). This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
-    /// <param name="ppi">The pixels per inch for the output. This parameter is currently not used by the underlying engine but is kept for future compatibility.</param>
-    public void Compile(string outputFile, string format, float ppi = 144.0f, IEnumerable<string>? pdfStandards = null)
+    /// <param name="format">The output format: "pdf", "png", "svg", or "svg-merged" for a single SVG holding every page.</param>
+    /// <param name="ppi">The pixels per inch used for raster output.</param>
+    /// <param name="pdfStandards">Optional PDF standards (e.g. "a-2b", "v-1.7").</param>
+    /// <param name="mergedGap">The distance between neighbouring pages in a merged SVG, in points.</param>
+    public void Compile(string outputFile, string format, float ppi = 144.0f, IEnumerable<string>? pdfStandards = null, float mergedGap = 0f)
     {
         ArgumentException.ThrowIfNullOrEmpty(outputFile);
 
-        using var document = CompileToDocument(format, ppi, pdfStandards);
+        using var document = CompileToDocument(format, ppi, pdfStandards, mergedGap);
         if (document.OutputCount == 1)
         {
             document.WriteOutputToFile(outputFile);
@@ -671,7 +743,8 @@ public sealed record PdfResult(byte[] Bytes, IReadOnlyList<string> Warnings)
 }
 
 /// <summary>
-/// Represents the result of compiling a document to SVG format (one SVG string per page).
+/// Represents the result of compiling a document to SVG format: one SVG string per page, or a
+/// single one holding every page for a merged SVG.
 /// Supports implicit conversion to <see cref="string"/> (returning the primary page SVG).
 /// </summary>
 public sealed record SvgResult(IReadOnlyList<string> Pages, IReadOnlyList<string> Warnings) : IReadOnlyList<string>

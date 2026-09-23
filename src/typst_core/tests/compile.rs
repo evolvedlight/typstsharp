@@ -30,7 +30,7 @@ fn compiler_for(source: &[u8]) -> *mut Compiler {
 fn compile_expecting_error(source: &[u8]) -> String {
     let compiler = compiler_for(source);
 
-    let result = unsafe { compile(compiler, std::ptr::null(), 96.0, std::ptr::null()) };
+    let result = unsafe { compile(compiler, std::ptr::null(), 96.0, 0.0, std::ptr::null()) };
     assert!(
         !result.error_ptr.is_null(),
         "invalid document compiled without an error"

@@ -37,7 +37,8 @@ use world::SystemWorld;
 /// cache can be reused.
 pub struct Compiler(SystemWorld);
 
-/// One rendered output: the whole document for PDF export, one page for PNG and SVG.
+/// One rendered output: the whole document for PDF and merged SVG export, one page for PNG and
+/// SVG.
 ///
 /// The bytes are owned by the [`CompileResult`] that contains this buffer and are freed by
 /// [`free_compile_result`]. They are not NUL-terminated; `len` is the only length.
@@ -238,6 +239,7 @@ fn compile_inner(
     world: &mut SystemWorld,
     format: &str,
     ppi: f32,
+    merged_gap: f32,
     standards: &[typst_pdf::PdfStandard],
 ) -> StrResult<(Vec<Vec<u8>>, Vec<SourceDiagnostic>)> {
     world.reset_time();
@@ -291,7 +293,7 @@ fn compile_inner(
         }
     };
 
-    let buffers = compiler::export(&document, format, ppi, standards)?;
+    let buffers = compiler::export(&document, format, ppi, merged_gap, standards)?;
     Ok((buffers, warnings))
 }
 
@@ -372,6 +374,7 @@ fn compile_internal(
     compiler: *mut Compiler,
     format_ptr: *const std::os::raw::c_char,
     ppi: f32,
+    merged_gap: f32,
     pdf_standards: *const std::os::raw::c_char,
 ) -> CompileResult {
     if compiler.is_null() {
@@ -395,7 +398,7 @@ fn compile_internal(
         Err(message) => return make_error_result(message),
     };
 
-    match compile_inner(&mut compiler.0, format_str, ppi, &standards) {
+    match compile_inner(&mut compiler.0, format_str, ppi, merged_gap, &standards) {
         Ok((buffers, warnings)) => {
             let c_buffers: Vec<Buffer> = buffers
                 .into_iter()
@@ -429,7 +432,11 @@ fn compile_internal(
     }
 }
 
-/// Compiles the document to `format`, which is one of `pdf`, `png` or `svg`.
+/// Compiles the document to `format`, which is one of `pdf`, `png`, `svg` or `svg-merged`.
+///
+/// `pdf` and `svg-merged` produce a single buffer for the whole document; `png` and `svg` produce
+/// one buffer per page. `ppi` applies to `png` only. `merged_gap` applies to `svg-merged` only and
+/// is the distance in points between neighbouring pages, which must be finite and non-negative.
 ///
 /// The returned [`CompileResult`] owns its buffers and messages. They do not borrow from
 /// `compiler`, so they outlive further compilations, [`set_sys_inputs`], [`reset_world`] and even
@@ -449,10 +456,11 @@ pub unsafe extern "C" fn compile(
     compiler: *mut Compiler,
     format_ptr: *const std::os::raw::c_char,
     ppi: f32,
+    merged_gap: f32,
     pdf_standards: *const std::os::raw::c_char,
 ) -> CompileResult {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compile_internal(compiler, format_ptr, ppi, pdf_standards)
+        compile_internal(compiler, format_ptr, ppi, merged_gap, pdf_standards)
     }));
 
     match result {

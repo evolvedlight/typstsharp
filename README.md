@@ -148,6 +148,23 @@ var pngResult = compiler.CompilePng(ppi: 300);
 byte[] page1Png = pngResult[0];
 ```
 
+#### Merged SVG
+`CompileMergedSvg()` renders every page into a single SVG, stacked top to bottom, like Typst's
+`svg_merged` export. The image is as wide as the widest page, and `gapInPoints` sets the distance
+between neighbouring pages (default `0`):
+
+```csharp
+var source = "= Page 1\n#pagebreak()\n= Page 2";
+
+using var compiler = TypstCompiler.FromSource(source);
+string merged = compiler.CompileMergedSvg(gapInPoints: 10);
+
+// Or in one call, saved to a file
+await TypstCompiler.CompileMergedSvg(source, gapInPoints: 10).SaveAsync("document.svg");
+```
+
+The generic APIs accept it as the `svg-merged` format, e.g. `compiler.Compile("document.svg", "svg-merged", mergedGap: 10)`.
+
 ### Zero-copy output
 
 `CompilePdf()` copies the rendered document onto the managed heap, which puts a multi-megabyte PDF on
@@ -168,9 +185,9 @@ The document owns the native memory and must be disposed. Streams from `OpenOutp
 alive and throw once it is disposed, so passing one to an SDK is safe. Spans from `GetOutputSpan()`
 do not, so they must not outlive the `using` block.
 
-A document is a list of output buffers rather than pages: PDF export produces one buffer for the
-whole document however many pages it has, while PNG and SVG produce one per page. `OutputCount` says
-how many there are, and every accessor takes an output index.
+A document is a list of output buffers rather than pages: PDF and merged SVG export produce one
+buffer for the whole document however many pages it has, while PNG and SVG produce one per page.
+`OutputCount` says how many there are, and every accessor takes an output index.
 
 ### Packages
 

@@ -12,6 +12,7 @@
 - `compiler.Compile(outputFile, format)` and `compiler.CompileSvg(...)` no longer copy the rendered output onto the managed heap before writing or decoding it.
 
 ### Added
+ - Added merged SVG export, rendering every page into a single SVG stacked top to bottom as Typst's `svg_merged` does. Use `compiler.CompileMergedSvg(gapInPoints)`, the static `TypstCompiler.CompileMergedSvg(...)` / `TypstCompiler.CompileMergedSvgFromFile(...)`, or the `svg-merged` format with the new `mergedGap` parameter on `CompileToDocument` and `Compile(outputFile, format)`. The gap between pages is given in points.
  - Added `compiler.CompileToDocument(...)`, returning a disposable `TypstDocument` that exposes the rendered output while it is still in the memory the native library allocated. `GetOutputSpan`, `OpenOutputStream`, `CopyOutputTo`, `WriteOutputToFile` and `RentOutput` read it without putting a multi-megabyte PDF on the large object heap; `GetOutputBytes` copies when a `byte[]` is what you need.
  - Added easier PDF compilation APIs on `TypstCompiler`:
    - `compiler.CompilePdf(...)` returning a `PdfResult` (with implicit conversion to `byte[]`, `ReadOnlySpan<byte>`, and `ReadOnlyMemory<byte>`).

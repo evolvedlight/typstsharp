@@ -60,7 +60,11 @@ namespace CsBindgen
         internal static extern bool set_sys_inputs(Compiler* compiler, byte* sys_inputs);
 
         /// <summary>
-        ///  Compiles the document to `format`, which is one of `pdf`, `png` or `svg`.
+        ///  Compiles the document to `format`, which is one of `pdf`, `png`, `svg` or `svg-merged`.
+        ///
+        ///  `pdf` and `svg-merged` produce a single buffer for the whole document; `png` and `svg` produce
+        ///  one buffer per page. `ppi` applies to `png` only. `merged_gap` applies to `svg-merged` only and
+        ///  is the distance in points between neighbouring pages, which must be finite and non-negative.
         ///
         ///  The returned [`CompileResult`] owns its buffers and messages. They do not borrow from
         ///  `compiler`, so they outlive further compilations, [`set_sys_inputs`], [`reset_world`] and even
@@ -77,7 +81,7 @@ namespace CsBindgen
         ///  for the duration of the call.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "compile", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern CompileResult compile(Compiler* compiler, byte* format_ptr, float ppi, byte* pdf_standards);
+        internal static extern CompileResult compile(Compiler* compiler, byte* format_ptr, float ppi, float merged_gap, byte* pdf_standards);
 
         /// <summary>
         ///  Releases every allocation owned by a [`CompileResult`]: the buffers, the warning messages and
@@ -112,7 +116,8 @@ namespace CsBindgen
     }
 
     /// <summary>
-    ///  One rendered output: the whole document for PDF export, one page for PNG and SVG.
+    ///  One rendered output: the whole document for PDF and merged SVG export, one page for PNG and
+    ///  SVG.
     ///
     ///  The bytes are owned by the [`CompileResult`] that contains this buffer and are freed by
     ///  [`free_compile_result`]. They are not NUL-terminated; `len` is the only length.

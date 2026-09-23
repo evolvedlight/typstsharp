@@ -276,6 +276,63 @@ public class Tests
         await Assert.That(result.PrimaryPage).Contains("<svg");
     }
 
+    // Two pages of different sizes: the merged SVG is as wide as the wider one and as tall as
+    // both together, plus the gap.
+    private const string TwoDifferentPages = """
+        #set page(width: 100pt, height: 50pt, margin: 0pt)
+        First
+        #set page(width: 80pt, height: 30pt)
+        Second
+        """;
+
+    [Test]
+    public async Task CompileMergedSvgStacksEveryPageIntoOneImage()
+    {
+        using var compiler = TypstCompiler.FromSource(TwoDifferentPages);
+
+        var result = compiler.CompileMergedSvg();
+        await Assert.That(result.Count).IsEqualTo(1);
+        await Assert.That(result.SinglePage.Split("<svg").Length - 1).IsEqualTo(1);
+        await Assert.That(result.SinglePage).Contains("viewBox=\"0 0 100 80\"");
+    }
+
+    [Test]
+    public async Task CompileMergedSvgAddsTheGapBetweenPages()
+    {
+        string svg = TypstCompiler.CompileMergedSvg(TwoDifferentPages, gapInPoints: 12.5f);
+        await Assert.That(svg).Contains("viewBox=\"0 0 100 92.5\"");
+    }
+
+    [Test]
+    public async Task CompileMergedSvgRejectsAnInvalidGap()
+    {
+        using var compiler = TypstCompiler.FromSource(TwoDifferentPages);
+
+        await Assert.That(() => compiler.CompileMergedSvg(-1f)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => compiler.CompileMergedSvg(float.NaN)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => compiler.CompileMergedSvg(float.PositiveInfinity)).Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task CompileToFileWritesMergedSvgAsOneFile()
+    {
+        var directory = Directory.CreateTempSubdirectory("typst-");
+        try
+        {
+            using var compiler = TypstCompiler.FromSource(TwoDifferentPages);
+            var output = Path.Combine(directory.FullName, "out.svg");
+
+            compiler.Compile(output, "svg-merged", mergedGap: 10f);
+
+            await Assert.That(Directory.GetFiles(directory.FullName).Length).IsEqualTo(1);
+            await Assert.That(await File.ReadAllTextAsync(output)).Contains("viewBox=\"0 0 100 90\"");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     [Test]
     public async Task TestUnicode()
     {

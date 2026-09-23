@@ -14,9 +14,9 @@ namespace typstsharp;
 /// PDF off the large object heap, which matters when documents are rendered in a loop or on a server.
 /// </para>
 /// <para>
-/// A document is a list of output buffers, not of pages. PDF export produces exactly one buffer
-/// containing the whole document however many pages it has; PNG and SVG export produce one buffer
-/// per page. See <see cref="OutputCount"/>.
+/// A document is a list of output buffers, not of pages. PDF and merged SVG export produce exactly
+/// one buffer containing the whole document however many pages it has; PNG and SVG export produce
+/// one buffer per page. See <see cref="OutputCount"/>.
 /// </para>
 /// <para>
 /// The native memory is released by <see cref="Dispose"/>. A <see cref="ReadOnlySpan{T}"/> from
@@ -86,8 +86,8 @@ public sealed class TypstDocument : IDisposable
     }
 
     /// <summary>
-    /// The number of output buffers. This is 1 for PDF export regardless of how many pages the
-    /// document has, and one per page for PNG and SVG export.
+    /// The number of output buffers. This is 1 for PDF and merged SVG export regardless of how many
+    /// pages the document has, and one per page for PNG and SVG export.
     /// </summary>
     public int OutputCount => _outputCount;
 

@@ -62,7 +62,7 @@ fn compiler_for_file(root: &Path, input_path: &str) -> *mut Compiler {
 
 /// Compiles to a PDF and returns its length, failing the test on a compiler error.
 fn compile_to_pdf_len(compiler: *mut Compiler) -> usize {
-    let result = compile(compiler, std::ptr::null(), 96.0, std::ptr::null());
+    let result = compile(compiler, std::ptr::null(), 96.0, 0.0, std::ptr::null());
 
     assert!(
         result.error_ptr.is_null(),
