@@ -89,7 +89,7 @@ fn compiler_for_source(root: &Path, source: &str) -> *mut Compiler {
 
 /// One compilation to a PDF: the error message on failure, the PDF length on success.
 fn compile_to_pdf(compiler: *mut Compiler) -> Result<usize, String> {
-    let result = unsafe { compile(compiler, std::ptr::null(), 96.0, std::ptr::null()) };
+    let result = unsafe { compile(compiler, std::ptr::null(), 96.0, 0.0, std::ptr::null()) };
 
     let outcome = if result.error_ptr.is_null() {
         assert_eq!(result.buffers_len, 1, "expected exactly one PDF buffer");
