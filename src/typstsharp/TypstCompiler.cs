@@ -34,7 +34,14 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <exception cref="Exception">Thrown when the Typst compiler fails to initialize.</exception>
-    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    /// <remarks>
+    /// The compiler may be kept and compiled repeatedly, which is what makes its incremental
+    /// cache worthwhile. Each compilation reads the file, and everything it imports, from disk
+    /// again, so a template rewritten underneath a running process takes effect. Write templates
+    /// atomically: a compilation that lands halfway through a plain overwrite renders whatever
+    /// the file held at that moment.
+    /// </remarks>
+    public TypstCompiler(string inputPath, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
         : this(inputPath, null, fonts, sysInputs, root, packagePath, includeSystemPackages)
     {
     }
@@ -53,7 +60,7 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    public static TypstCompiler FromSource(string source, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
         return new TypstCompiler(null, source, fonts, sysInputs, root, packagePath, includeSystemPackages);
     }
@@ -72,7 +79,14 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    /// <remarks>
+    /// The compiler may be kept and compiled repeatedly, which is what makes its incremental
+    /// cache worthwhile. Each compilation reads the file, and everything it imports, from disk
+    /// again, so a template rewritten underneath a running process takes effect. Write templates
+    /// atomically: a compilation that lands halfway through a plain overwrite renders whatever
+    /// the file held at that moment.
+    /// </remarks>
+    public static TypstCompiler FromFile(string path, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
         return new TypstCompiler(path, null, fonts, sysInputs, root, packagePath, includeSystemPackages);
     }
@@ -91,7 +105,7 @@ public class TypstCompiler : IDisposable
     public static PdfResult CompilePdf(
         string source,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true,
@@ -115,7 +129,7 @@ public class TypstCompiler : IDisposable
     public static PdfResult CompilePdfFromFile(
         string path,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true,
@@ -140,7 +154,7 @@ public class TypstCompiler : IDisposable
         string source,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -164,7 +178,7 @@ public class TypstCompiler : IDisposable
         string path,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -236,7 +250,7 @@ public class TypstCompiler : IDisposable
         string source,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -260,7 +274,7 @@ public class TypstCompiler : IDisposable
         string path,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -271,7 +285,7 @@ public class TypstCompiler : IDisposable
 
     
 
-    private unsafe TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root, string? packagePath = null, bool includeSystemPackages = true)
+    private unsafe TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, IDictionary<string, string>? sysInputs, string? root, string? packagePath = null, bool includeSystemPackages = true)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? [];
@@ -283,54 +297,82 @@ public class TypstCompiler : IDisposable
             root = Path.GetDirectoryName(inputPath);
         }
 
-        var inputPathPtr = inputPath != null ? Marshal.StringToCoTaskMemUTF8(inputPath) : IntPtr.Zero;
-
-        // The source goes over as raw UTF-8 bytes with an explicit length. A Typst
-        // document may contain NUL bytes, and a NUL-terminated string would be
-        // silently truncated at the first one.
-        byte[]? inputSourceBytes = null;
-        nuint inputSourceLen = 0;
-        if (inputSource != null)
-        {
-            var encoded = Encoding.UTF8.GetBytes(inputSource);
-            inputSourceLen = (nuint)encoded.Length;
-            // `fixed` over an empty array yields a null pointer, which the native
-            // side reads as "no source at all". A one-byte placeholder keeps an
-            // empty document distinguishable; the length passed stays 0.
-            inputSourceBytes = encoded.Length == 0 ? new byte[1] : encoded;
-        }
-
+        // These pointers are native memory that the finally block below releases, so they are
+        // declared out here and allocated inside the try. Allocating them before it would leak
+        // whatever had been allocated already if a later step threw, and several steps can:
+        // fontPaths may be a lazy sequence supplied by the caller, and sysInputs is serialized.
+        IntPtr inputPathPtr = IntPtr.Zero;
+        IntPtr inputSourcePtr = IntPtr.Zero;
         IntPtr rootPtr = IntPtr.Zero;
-        if (!string.IsNullOrWhiteSpace(root))
-        {
-            rootPtr = Marshal.StringToCoTaskMemUTF8(root);
-        }
-
-        var fontPathsList = fontPaths.ToList();
-        var fontPathPtrs = new IntPtr[fontPathsList.Count];
-        for (int i = 0; i < fontPathsList.Count; i++)
-        {
-            fontPathPtrs[i] = Marshal.StringToCoTaskMemUTF8(fontPathsList[i]);
-        }
-
-        var packagePathPtr = packagePath != null ? Marshal.StringToCoTaskMemUTF8(packagePath) : IntPtr.Zero;
-
-        var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
-        var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
+        IntPtr[] fontPathPtrs = [];
+        IntPtr packagePathPtr = IntPtr.Zero;
+        IntPtr sysInputsPtr = IntPtr.Zero;
+        nuint inputSourceLen = 0;
 
         try
         {
-            fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
-            fixed (byte* inputSourcePtr = inputSourceBytes)
+            if (inputPath != null)
             {
-                IntPtr* fontPathsPtr = fontPathsList.Count == 0 ? null : fontPathsRawPtr;
+                inputPathPtr = Marshal.StringToCoTaskMemUTF8(inputPath);
+            }
+
+            // The source goes over as raw UTF-8 bytes with an explicit length. A Typst
+            // document may contain NUL bytes, and a NUL-terminated string would be
+            // silently truncated at the first one.
+            if (inputSource != null)
+            {
+                // Encoding straight into native memory keeps a document-sized array off the managed
+                // heap; a source of any size would otherwise be copied there, and a large one would
+                // land on the large object heap, only to be garbage as soon as the call returns.
+                int byteCount = Encoding.UTF8.GetByteCount(inputSource);
+
+                // A null pointer reads as "no source at all" on the native side, so an empty
+                // document still needs one real byte behind the pointer; the length stays 0.
+                inputSourcePtr = Marshal.AllocCoTaskMem(byteCount == 0 ? 1 : byteCount);
+                int written = 0;
+                if (byteCount > 0)
+                {
+                    fixed (char* chars = inputSource)
+                    {
+                        written = Encoding.UTF8.GetBytes(chars, inputSource.Length, (byte*)inputSourcePtr, byteCount);
+                    }
+                }
+
+                // The length comes from the encode rather than the count, so the native side can
+                // never be handed a length that reaches past what was written.
+                inputSourceLen = (nuint)written;
+            }
+
+            if (!string.IsNullOrWhiteSpace(root))
+            {
+                rootPtr = Marshal.StringToCoTaskMemUTF8(root);
+            }
+
+            var fontPathsList = fontPaths.ToList();
+            fontPathPtrs = new IntPtr[fontPathsList.Count];
+            for (int i = 0; i < fontPathPtrs.Length; i++)
+            {
+                fontPathPtrs[i] = Marshal.StringToCoTaskMemUTF8(fontPathsList[i]);
+            }
+
+            if (packagePath != null)
+            {
+                packagePathPtr = Marshal.StringToCoTaskMemUTF8(packagePath);
+            }
+
+            var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<IDictionary<string, string>>(sysInputs, sourceGenOptions);
+            sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
+
+            fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
+            {
+                IntPtr* fontPathsPtr = fontPathPtrs.Length == 0 ? null : fontPathsRawPtr;
                 _compiler = CsBindgen.NativeMethods.create_compiler(
                     (byte*)rootPtr,
                     (byte*)inputPathPtr,
-                    inputSourcePtr,
+                    (byte*)inputSourcePtr,
                     inputSourceLen,
                     (byte**)fontPathsPtr,
-                    (nuint)fontPathsList.Count,
+                    (nuint)fontPathPtrs.Length,
                     (byte*)packagePathPtr,
                     (byte*)sysInputsPtr,
                     ignoreSystemFonts,
@@ -344,11 +386,14 @@ public class TypstCompiler : IDisposable
         }
         finally
         {
+            // A throw part way through leaves some of these null, and the font path array only
+            // partly filled. FreeCoTaskMem ignores a null pointer, so the loop needs no guard.
             if (rootPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(rootPtr);
             if (inputPathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputPathPtr);
+            if (inputSourcePtr != IntPtr.Zero) Marshal.FreeCoTaskMem(inputSourcePtr);
             foreach (var ptr in fontPathPtrs) Marshal.FreeCoTaskMem(ptr);
             if (packagePathPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(packagePathPtr);
-            Marshal.FreeCoTaskMem(sysInputsPtr);
+            if (sysInputsPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(sysInputsPtr);
         }
     }
 
@@ -620,11 +665,11 @@ public class TypstCompiler : IDisposable
     /// </summary>
     /// <param name="inputs">A dictionary of key-value pairs. Values are serialized to JSON and passed to the compiler.</param>
     /// <exception cref="Exception">Thrown if the inputs fail to be set in the native compiler.</exception>
-    public unsafe void SetSysInputs(Dictionary<string, string> inputs)
+    public unsafe void SetSysInputs(IDictionary<string, string> inputs)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
 
-        var sysInputsJson = JsonSerializer.Serialize<Dictionary<string, string>>(inputs, sourceGenOptions);
+        var sysInputsJson = JsonSerializer.Serialize<IDictionary<string, string>>(inputs, sourceGenOptions);
         var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
         try
         {
@@ -743,6 +788,70 @@ public sealed record PdfResult(byte[] Bytes, IReadOnlyList<string> Warnings)
 }
 
 /// <summary>
+/// Walks the pages of a compile result without allocating.
+/// </summary>
+/// <remarks>
+/// <see cref="SvgResult"/> and <see cref="PngResult"/> hold their pages behind
+/// <see cref="IReadOnlyList{T}"/>. Returning that list's own enumerator would box it, because the
+/// list hands it back as an <see cref="IEnumerator{T}"/> rather than as its own struct. Indexing
+/// instead costs one interface call per page and nothing on the heap.
+/// <para>
+/// Both the <c>foreach</c> path and the interface path go through this type, so they agree. The
+/// trade is that neither detects a page list mutated while it is being walked, which a
+/// <see cref="List{T}"/> enumerator would have reported on the interface path alone. A compile
+/// result is not something a caller is expected to mutate.
+/// </para>
+/// </remarks>
+/// <typeparam name="T">The page type: an SVG string or the bytes of a PNG.</typeparam>
+public struct PageEnumerator<T> : IEnumerator<T>
+{
+    private readonly IReadOnlyList<T> _pages;
+    private readonly int _count;
+    private int _index;
+
+    internal PageEnumerator(IReadOnlyList<T> pages)
+    {
+        _pages = pages;
+        _count = pages.Count;
+        _index = -1;
+    }
+
+    public readonly T Current => _pages[_index];
+
+    /// <summary>
+    /// The boxed accessor is the one hand-written enumerator code reaches for, so it holds to the
+    /// documented contract and reports an index outside the enumeration as
+    /// <see cref="InvalidOperationException"/> rather than letting the list decide.
+    /// </summary>
+    readonly object? System.Collections.IEnumerator.Current => (uint)_index < (uint)_count
+        ? Current
+        : throw new InvalidOperationException("Enumeration has either not started or has already finished.");
+
+    /// <summary>
+    /// The index stops at the end rather than running on, so that repeated calls on an exhausted
+    /// enumerator cannot eventually overflow it back into range.
+    /// </summary>
+    public bool MoveNext()
+    {
+        int next = _index + 1;
+        if (next >= _count)
+        {
+            _index = _count;
+            return false;
+        }
+
+        _index = next;
+        return true;
+    }
+
+    public void Reset() => _index = -1;
+
+    public readonly void Dispose()
+    {
+    }
+}
+
+/// <summary>
 /// Represents the result of compiling a document to SVG format: one SVG string per page, or a
 /// single one holding every page for a merged SVG.
 /// Supports implicit conversion to <see cref="string"/> (returning the primary page SVG).
@@ -751,8 +860,16 @@ public sealed record SvgResult(IReadOnlyList<string> Pages, IReadOnlyList<string
 {
     public int Count => Pages.Count;
     public string this[int index] => Pages[index];
-    public IEnumerator<string> GetEnumerator() => Pages.GetEnumerator();
-    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => Pages.GetEnumerator();
+
+    /// <summary>
+    /// Returns a struct enumerator, which <c>foreach</c> binds to in preference to the interface.
+    /// Forwarding straight to <c>Pages.GetEnumerator()</c> would hand back the underlying list's
+    /// enumerator through <see cref="IEnumerator{T}"/> and box it once per enumeration.
+    /// </summary>
+    public PageEnumerator<string> GetEnumerator() => new(Pages);
+
+    IEnumerator<string> IEnumerable<string>.GetEnumerator() => new PageEnumerator<string>(Pages);
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => new PageEnumerator<string>(Pages);
 
     /// <summary>
     /// Implicitly converts the <see cref="SvgResult"/> to a <see cref="string"/> containing the primary SVG page.
@@ -813,8 +930,16 @@ public sealed record PngResult(IReadOnlyList<byte[]> Pages, IReadOnlyList<string
 {
     public int Count => Pages.Count;
     public byte[] this[int index] => Pages[index];
-    public IEnumerator<byte[]> GetEnumerator() => Pages.GetEnumerator();
-    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => Pages.GetEnumerator();
+
+    /// <summary>
+    /// Returns a struct enumerator, which <c>foreach</c> binds to in preference to the interface.
+    /// Forwarding straight to <c>Pages.GetEnumerator()</c> would hand back the underlying list's
+    /// enumerator through <see cref="IEnumerator{T}"/> and box it once per enumeration.
+    /// </summary>
+    public PageEnumerator<byte[]> GetEnumerator() => new(Pages);
+
+    IEnumerator<byte[]> IEnumerable<byte[]>.GetEnumerator() => new PageEnumerator<byte[]>(Pages);
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => new PageEnumerator<byte[]>(Pages);
 
     /// <summary>
     /// Implicitly converts the <see cref="PngResult"/> to <see cref="byte[]"/> of the primary PNG page.
