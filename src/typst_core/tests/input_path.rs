@@ -46,23 +46,25 @@ fn compiler_for_file(root: &Path, input_path: &str) -> *mut Compiler {
     let input_path = CString::new(input_path).unwrap();
     let sys_inputs = CString::new("{}").unwrap();
 
-    create_compiler(
-        root.as_ptr(),
-        input_path.as_ptr(),
-        std::ptr::null(),
-        0,
-        std::ptr::null::<*const c_char>(),
-        0,
-        std::ptr::null(),
-        sys_inputs.as_ptr(),
-        true,
-        true,
-    )
+    unsafe {
+        create_compiler(
+            root.as_ptr(),
+            input_path.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null::<*const c_char>(),
+            0,
+            std::ptr::null(),
+            sys_inputs.as_ptr(),
+            true,
+            true,
+        )
+    }
 }
 
 /// Compiles to a PDF and returns its length, failing the test on a compiler error.
 fn compile_to_pdf_len(compiler: *mut Compiler) -> usize {
-    let result = compile(compiler, std::ptr::null(), 96.0, std::ptr::null());
+    let result = unsafe { compile(compiler, std::ptr::null(), 96.0, std::ptr::null()) };
 
     assert!(
         result.error_ptr.is_null(),
@@ -78,7 +80,7 @@ fn compile_to_pdf_len(compiler: *mut Compiler) -> usize {
     assert_eq!(result.buffers_len, 1, "expected exactly one PDF buffer");
 
     let len = unsafe { (*result.buffers).len };
-    free_compile_result(result);
+    unsafe { free_compile_result(result) };
     len
 }
 
@@ -101,7 +103,7 @@ fn nested_relative_input_path_is_compiled() {
     );
 
     assert!(compile_to_pdf_len(compiler) > 0, "produced an empty PDF");
-    free_compiler(compiler);
+    unsafe { free_compiler(compiler) };
 }
 
 /// The separator is spelled out rather than taken from `Path`, so this stays a
@@ -119,7 +121,7 @@ fn windows_separator_in_the_input_path_is_compiled() {
     );
 
     assert!(compile_to_pdf_len(compiler) > 0, "produced an empty PDF");
-    free_compiler(compiler);
+    unsafe { free_compiler(compiler) };
 }
 
 /// A path that steps out of a subfolder and back in never leaves the root, so it
@@ -139,7 +141,7 @@ fn input_path_leaving_and_reentering_the_root_is_compiled() {
     assert!(!compiler.is_null(), "`{input_path}` was rejected");
 
     assert!(compile_to_pdf_len(compiler) > 0, "produced an empty PDF");
-    free_compiler(compiler);
+    unsafe { free_compiler(compiler) };
 }
 
 /// The same file named absolutely resolves to the same document.
@@ -152,7 +154,7 @@ fn absolute_input_path_inside_the_root_is_compiled() {
     assert!(!compiler.is_null(), "absolute input path was rejected");
 
     assert!(compile_to_pdf_len(compiler) > 0, "produced an empty PDF");
-    free_compiler(compiler);
+    unsafe { free_compiler(compiler) };
 }
 
 /// A relative path that climbs out of the root has to be refused. Reaching outside
