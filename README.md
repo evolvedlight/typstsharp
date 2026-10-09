@@ -195,6 +195,13 @@ builds reproducible: whatever is deployed is exactly what gets compiled.
 
 You can easily use this inside of an ASP.Net Server (just ensure you lazy load and cache the TypstCompiler to reduce from 40ms to around 3ms for a normal compile).
 
+A cached compiler stays current: every compilation reads the template, its imports and its data
+files from disk again, so redeploying a template takes effect without restarting the process. Two
+things follow from that. Replace template files atomically — write a temporary file and rename it —
+because a compilation that lands halfway through a plain overwrite renders the half-written file.
+And a warm compilation now costs one stat and one read per file it touches, so a template split
+across many files is measurably more expensive to recompile than a single one.
+
 ## Prerequisites
 
 - [.NET SDK 10.0](https://dotnet.microsoft.com/) – required to build the managed projects.
