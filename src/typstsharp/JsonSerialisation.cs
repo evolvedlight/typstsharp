@@ -8,5 +8,5 @@ using System.Threading.Tasks;
 namespace typstsharp;
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
-[JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSerializable(typeof(IDictionary<string, string>))]
 internal partial class SourceGenerationContext : JsonSerializerContext { }

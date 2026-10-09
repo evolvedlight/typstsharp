@@ -53,7 +53,8 @@ public sealed class TypstDocument : IDisposable
         }
 
         // Warnings are small and are copied eagerly so that they stay usable after disposal.
-        var warnings = new string[warningCount];
+        // A clean compile is the common case, and Array.Empty spares it the only allocation here.
+        var warnings = warningCount == 0 ? Array.Empty<string>() : new string[warningCount];
         for (int i = 0; i < warnings.Length; i++)
         {
             var warning = native.warnings[i];

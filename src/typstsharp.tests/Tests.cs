@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.ObjectModel;
 using System.Text;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
@@ -422,6 +423,28 @@ public class Tests
 
         await Assert.That(plainText).Contains("Grüezi mitenand");
         await Assert.That(plainText).Contains("Schluss");
+    }
+
+    [Test]
+    public async Task SysInputsParameterAcceptsReadOnlyDictionary()
+    {
+        var sysInputs = new ReadOnlyDictionary<string, string>(
+            new Dictionary<string, string> { ["greeting"] = "Hello Inputs" });
+
+        using var compiler = TypstCompiler.FromSource("#sys.inputs.greeting", sysInputs: sysInputs);
+        var plainText = GetPlainText(compiler.CompilePdf());
+        await Assert.That(plainText).Contains("Hello Inputs");
+    }
+
+    [Test]
+    public async Task SetSysInputsAcceptsReadOnlyDictionary()
+    {
+        using var compiler = TypstCompiler.FromSource("#sys.inputs.greeting");
+        compiler.SetSysInputs(new ReadOnlyDictionary<string, string>(
+            new Dictionary<string, string> { ["greeting"] = "Hello Later" }));
+
+        var plainText = GetPlainText(compiler.CompilePdf());
+        await Assert.That(plainText).Contains("Hello Later");
     }
 
     [Test]
@@ -1176,6 +1199,65 @@ public class Tests
         }
     }
 
+    /// <summary>
+    /// foreach binds to the struct enumerator rather than the interface, so walking the pages of a
+    /// result costs nothing on the heap. Both results forward to a list held behind
+    /// IReadOnlyList, whose own enumerator would be boxed once per enumeration.
+    /// </summary>
+    [Test]
+    public async Task EnumeratingResultPagesDoesNotAllocate()
+    {
+        using var compiler = TypstCompiler.FromSource(TwoPageSource);
+        var svg = compiler.CompileSvg();
+        var png = compiler.CompilePng();
+
+        // Warm up so that nothing on the first pass is counted.
+        foreach (var page in svg) { _ = page; }
+        foreach (var page in png) { _ = page; }
+
+        // No await may sit between these two reads: the counter is per thread.
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        foreach (var page in svg) { _ = page; }
+        foreach (var page in png) { _ = page; }
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        await Assert.That(allocated).IsEqualTo(0);
+    }
+
+    /// <summary>
+    /// The struct enumerator must yield exactly what the indexer does, and the interface path that
+    /// LINQ and IEnumerable callers take has to keep working alongside it.
+    /// </summary>
+    [Test]
+    public async Task ResultPagesEnumerateInIndexOrderThroughBothPaths()
+    {
+        using var compiler = TypstCompiler.FromSource(TwoPageSource);
+        var svg = compiler.CompileSvg();
+
+        var byForeach = new List<string>();
+        foreach (var page in svg)
+        {
+            byForeach.Add(page);
+        }
+
+        var byIndexer = Enumerable.Range(0, svg.Count).Select(i => svg[i]).ToList();
+        var byLinq = svg.ToList();
+
+        await Assert.That(byForeach.Count).IsEqualTo(2);
+        await Assert.That(byForeach.SequenceEqual(byIndexer)).IsTrue();
+        await Assert.That(byLinq.SequenceEqual(byIndexer)).IsTrue();
+
+        var png = compiler.CompilePng();
+        var pngByForeach = new List<byte[]>();
+        foreach (var page in png)
+        {
+            pngByForeach.Add(page);
+        }
+
+        await Assert.That(pngByForeach.Count).IsEqualTo(png.Count);
+        await Assert.That(pngByForeach.SequenceEqual(png.ToList())).IsTrue();
+    }
+
     [Test]
     public async Task WarningsFromADocumentCannotBeMutatedByCallers()
     {
@@ -1184,6 +1266,26 @@ public class Tests
 
         await Assert.That(document.Warnings.Count).IsGreaterThan(0);
         await Assert.That(document.Warnings is string[]).IsFalse();
+    }
+
+    /// <summary>
+    /// The warning-free case had no coverage. This pins the public contract rather than the
+    /// allocation, so it holds whichever way the empty list is produced: empty, and not a mutable
+    /// array handed out to callers.
+    /// </summary>
+    [Test]
+    public async Task WarningsFromACleanCompileAreEmptyAndStillImmutable()
+    {
+        using var compiler = TypstCompiler.FromSource("= No warnings here");
+        var document = compiler.CompileToDocument();
+
+        await Assert.That(document.Warnings.Count).IsEqualTo(0);
+        await Assert.That(document.Warnings is string[]).IsFalse();
+
+        document.Dispose();
+
+        // Warnings are copied out of native memory eagerly, so they outlive the document.
+        await Assert.That(document.Warnings.Count).IsEqualTo(0);
     }
 
     private const string TwoPageSource = """

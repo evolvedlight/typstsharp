@@ -41,7 +41,7 @@ public class TypstCompiler : IDisposable
     /// atomically: a compilation that lands halfway through a plain overwrite renders whatever
     /// the file held at that moment.
     /// </remarks>
-    public TypstCompiler(string inputPath, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    public TypstCompiler(string inputPath, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
         : this(inputPath, null, fonts, sysInputs, root, packagePath, includeSystemPackages)
     {
     }
@@ -60,7 +60,7 @@ public class TypstCompiler : IDisposable
     /// that directory, which keeps compilation off the network.
     /// </param>
     /// <returns>A new <see cref="TypstCompiler"/> instance.</returns>
-    public static TypstCompiler FromSource(string source, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    public static TypstCompiler FromSource(string source, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
         return new TypstCompiler(null, source, fonts, sysInputs, root, packagePath, includeSystemPackages);
     }
@@ -86,7 +86,7 @@ public class TypstCompiler : IDisposable
     /// atomically: a compilation that lands halfway through a plain overwrite renders whatever
     /// the file held at that moment.
     /// </remarks>
-    public static TypstCompiler FromFile(string path, Fonts? fonts = null, Dictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
+    public static TypstCompiler FromFile(string path, Fonts? fonts = null, IDictionary<string, string>? sysInputs = null, string? root = null, string? packagePath = null, bool includeSystemPackages = true)
     {
         return new TypstCompiler(path, null, fonts, sysInputs, root, packagePath, includeSystemPackages);
     }
@@ -105,7 +105,7 @@ public class TypstCompiler : IDisposable
     public static PdfResult CompilePdf(
         string source,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true,
@@ -129,7 +129,7 @@ public class TypstCompiler : IDisposable
     public static PdfResult CompilePdfFromFile(
         string path,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true,
@@ -154,7 +154,7 @@ public class TypstCompiler : IDisposable
         string source,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -178,7 +178,7 @@ public class TypstCompiler : IDisposable
         string path,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -202,7 +202,7 @@ public class TypstCompiler : IDisposable
         string source,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -226,7 +226,7 @@ public class TypstCompiler : IDisposable
         string path,
         float ppi = 144.0f,
         Fonts? fonts = null,
-        Dictionary<string, string>? sysInputs = null,
+        IDictionary<string, string>? sysInputs = null,
         string? root = null,
         string? packagePath = null,
         bool includeSystemPackages = true)
@@ -237,7 +237,7 @@ public class TypstCompiler : IDisposable
 
     
 
-    private unsafe TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, Dictionary<string, string>? sysInputs, string? root, string? packagePath = null, bool includeSystemPackages = true)
+    private unsafe TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, IDictionary<string, string>? sysInputs, string? root, string? packagePath = null, bool includeSystemPackages = true)
     {
         fonts ??= new Fonts();
         var fontPaths = fonts.FontPaths ?? [];
@@ -312,7 +312,7 @@ public class TypstCompiler : IDisposable
                 packagePathPtr = Marshal.StringToCoTaskMemUTF8(packagePath);
             }
 
-            var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<Dictionary<string, string>>(sysInputs, sourceGenOptions);
+            var sysInputsJson = sysInputs == null ? "{}" : JsonSerializer.Serialize<IDictionary<string, string>>(sysInputs, sourceGenOptions);
             sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
 
             fixed (IntPtr* fontPathsRawPtr = fontPathPtrs)
@@ -593,11 +593,11 @@ public class TypstCompiler : IDisposable
     /// </summary>
     /// <param name="inputs">A dictionary of key-value pairs. Values are serialized to JSON and passed to the compiler.</param>
     /// <exception cref="Exception">Thrown if the inputs fail to be set in the native compiler.</exception>
-    public unsafe void SetSysInputs(Dictionary<string, string> inputs)
+    public unsafe void SetSysInputs(IDictionary<string, string> inputs)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
 
-        var sysInputsJson = JsonSerializer.Serialize<Dictionary<string, string>>(inputs, sourceGenOptions);
+        var sysInputsJson = JsonSerializer.Serialize<IDictionary<string, string>>(inputs, sourceGenOptions);
         var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
         try
         {
@@ -716,6 +716,70 @@ public sealed record PdfResult(byte[] Bytes, IReadOnlyList<string> Warnings)
 }
 
 /// <summary>
+/// Walks the pages of a compile result without allocating.
+/// </summary>
+/// <remarks>
+/// <see cref="SvgResult"/> and <see cref="PngResult"/> hold their pages behind
+/// <see cref="IReadOnlyList{T}"/>. Returning that list's own enumerator would box it, because the
+/// list hands it back as an <see cref="IEnumerator{T}"/> rather than as its own struct. Indexing
+/// instead costs one interface call per page and nothing on the heap.
+/// <para>
+/// Both the <c>foreach</c> path and the interface path go through this type, so they agree. The
+/// trade is that neither detects a page list mutated while it is being walked, which a
+/// <see cref="List{T}"/> enumerator would have reported on the interface path alone. A compile
+/// result is not something a caller is expected to mutate.
+/// </para>
+/// </remarks>
+/// <typeparam name="T">The page type: an SVG string or the bytes of a PNG.</typeparam>
+public struct PageEnumerator<T> : IEnumerator<T>
+{
+    private readonly IReadOnlyList<T> _pages;
+    private readonly int _count;
+    private int _index;
+
+    internal PageEnumerator(IReadOnlyList<T> pages)
+    {
+        _pages = pages;
+        _count = pages.Count;
+        _index = -1;
+    }
+
+    public readonly T Current => _pages[_index];
+
+    /// <summary>
+    /// The boxed accessor is the one hand-written enumerator code reaches for, so it holds to the
+    /// documented contract and reports an index outside the enumeration as
+    /// <see cref="InvalidOperationException"/> rather than letting the list decide.
+    /// </summary>
+    readonly object? System.Collections.IEnumerator.Current => (uint)_index < (uint)_count
+        ? Current
+        : throw new InvalidOperationException("Enumeration has either not started or has already finished.");
+
+    /// <summary>
+    /// The index stops at the end rather than running on, so that repeated calls on an exhausted
+    /// enumerator cannot eventually overflow it back into range.
+    /// </summary>
+    public bool MoveNext()
+    {
+        int next = _index + 1;
+        if (next >= _count)
+        {
+            _index = _count;
+            return false;
+        }
+
+        _index = next;
+        return true;
+    }
+
+    public void Reset() => _index = -1;
+
+    public readonly void Dispose()
+    {
+    }
+}
+
+/// <summary>
 /// Represents the result of compiling a document to SVG format (one SVG string per page).
 /// Supports implicit conversion to <see cref="string"/> (returning the primary page SVG).
 /// </summary>
@@ -723,8 +787,16 @@ public sealed record SvgResult(IReadOnlyList<string> Pages, IReadOnlyList<string
 {
     public int Count => Pages.Count;
     public string this[int index] => Pages[index];
-    public IEnumerator<string> GetEnumerator() => Pages.GetEnumerator();
-    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => Pages.GetEnumerator();
+
+    /// <summary>
+    /// Returns a struct enumerator, which <c>foreach</c> binds to in preference to the interface.
+    /// Forwarding straight to <c>Pages.GetEnumerator()</c> would hand back the underlying list's
+    /// enumerator through <see cref="IEnumerator{T}"/> and box it once per enumeration.
+    /// </summary>
+    public PageEnumerator<string> GetEnumerator() => new(Pages);
+
+    IEnumerator<string> IEnumerable<string>.GetEnumerator() => new PageEnumerator<string>(Pages);
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => new PageEnumerator<string>(Pages);
 
     /// <summary>
     /// Implicitly converts the <see cref="SvgResult"/> to a <see cref="string"/> containing the primary SVG page.
@@ -785,8 +857,16 @@ public sealed record PngResult(IReadOnlyList<byte[]> Pages, IReadOnlyList<string
 {
     public int Count => Pages.Count;
     public byte[] this[int index] => Pages[index];
-    public IEnumerator<byte[]> GetEnumerator() => Pages.GetEnumerator();
-    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => Pages.GetEnumerator();
+
+    /// <summary>
+    /// Returns a struct enumerator, which <c>foreach</c> binds to in preference to the interface.
+    /// Forwarding straight to <c>Pages.GetEnumerator()</c> would hand back the underlying list's
+    /// enumerator through <see cref="IEnumerator{T}"/> and box it once per enumeration.
+    /// </summary>
+    public PageEnumerator<byte[]> GetEnumerator() => new(Pages);
+
+    IEnumerator<byte[]> IEnumerable<byte[]>.GetEnumerator() => new PageEnumerator<byte[]>(Pages);
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => new PageEnumerator<byte[]>(Pages);
 
     /// <summary>
     /// Implicitly converts the <see cref="PngResult"/> to <see cref="byte[]"/> of the primary PNG page.
