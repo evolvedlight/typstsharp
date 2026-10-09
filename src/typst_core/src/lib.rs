@@ -240,7 +240,7 @@ fn compile_inner(
     ppi: f32,
     standards: &[typst_pdf::PdfStandard],
 ) -> StrResult<(Vec<Vec<u8>>, Vec<SourceDiagnostic>)> {
-    world.reset_time();
+    world.reset();
     let (document, warnings) = match typst::compile::<PagedDocument>(world) {
         Warned { output, warnings } => {
             let doc = output.map_err(|errors| {
