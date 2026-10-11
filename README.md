@@ -212,12 +212,15 @@ builds reproducible: whatever is deployed is exactly what gets compiled.
 
 You can easily use this inside of an ASP.Net Server (just ensure you lazy load and cache the TypstCompiler to reduce from 40ms to around 3ms for a normal compile).
 
-A cached compiler stays current: every compilation reads the template, its imports and its data
-files from disk again, so redeploying a template takes effect without restarting the process. Two
-things follow from that. Replace template files atomically — write a temporary file and rename it —
-because a compilation that lands halfway through a plain overwrite renders the half-written file.
-And a warm compilation now costs one stat and one read per file it touches, so a template split
-across many files is measurably more expensive to recompile than a single one.
+A cached compiler stays current: every compilation checks the template, its imports and its data
+files on disk, so redeploying a template takes effect without restarting the process. The check
+is one stat per file the compilation touches, and a file is read again only when its size or
+modification time has changed. Two things follow from that. Replace template files atomically,
+by writing a temporary file and renaming it, because a compilation that lands halfway through a
+plain overwrite renders the half-written file. And a deployment that rewrites a file while keeping
+both its size and its modification time, such as a copy that preserves timestamps over a file of
+the same length, is not noticed; a file modified within the last two seconds is always read, so
+an ordinary write is safe even on file systems with coarse timestamps.
 
 ## Prerequisites
 
