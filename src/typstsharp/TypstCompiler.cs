@@ -283,7 +283,37 @@ public class TypstCompiler : IDisposable
         return compiler.CompilePng(ppi);
     }
 
-    
+    /// <summary>
+    /// Clears Typst's incremental compilation cache, which every compiler in the process shares,
+    /// and releases the memory it holds.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if the native eviction failed.</exception>
+    /// <remarks>
+    /// <para>
+    /// The cache is what makes recompiling a template fast. Every compilation trims it on the way
+    /// out, keeping whatever was used by one of the last ten compilations. How much it holds grows
+    /// with the size of the documents compiled, so an unusually large document, such as one of a
+    /// few thousand pages, can hold on to gigabytes of native memory until ten more compilations have
+    /// passed. Call this right after such a compilation to release that memory at once.
+    /// </para>
+    /// <para>
+    /// The next compilation does the work it did the first time, for every compiler in the process,
+    /// so calling this after every compilation gives up most of the benefit of reusing a compiler.
+    /// The sources and fonts a compiler has loaded are kept.
+    /// </para>
+    /// <para>
+    /// It is safe to call from any thread, also while other compilations run: they recompute what
+    /// they lose, and their output is unaffected. Documents that have already been compiled own
+    /// their memory and stay valid.
+    /// </para>
+    /// </remarks>
+    public static void EvictCache()
+    {
+        if (!CsBindgen.NativeMethods.evict_cache())
+        {
+            throw new InvalidOperationException("Typst failed to evict its compilation cache.");
+        }
+    }
 
     private unsafe TypstCompiler(string? inputPath, string? inputSource, Fonts? fonts, IDictionary<string, string>? sysInputs, string? root, string? packagePath = null, bool includeSystemPackages = true)
     {
@@ -454,7 +484,8 @@ public class TypstCompiler : IDisposable
             }
             finally
             {
-                // Trims the incremental compilation cache; independent of who owns the buffers.
+                // Trims the incremental compilation cache to what the last ten compilations used;
+                // EvictCache releases more. Independent of who owns the buffers.
                 CsBindgen.NativeMethods.reset_world();
             }
         }

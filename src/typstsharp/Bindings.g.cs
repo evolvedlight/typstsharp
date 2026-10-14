@@ -67,9 +67,9 @@ namespace CsBindgen
         ///  is the distance in points between neighbouring pages, which must be finite and non-negative.
         ///
         ///  The returned [`CompileResult`] owns its buffers and messages. They do not borrow from
-        ///  `compiler`, so they outlive further compilations, [`set_sys_inputs`], [`reset_world`] and even
-        ///  [`free_compiler`] on the compiler that produced them. The caller must pass the result to
-        ///  [`free_compile_result`] exactly once.
+        ///  `compiler`, so they outlive further compilations, [`set_sys_inputs`], [`reset_world`],
+        ///  [`evict_cache`] and even [`free_compiler`] on the compiler that produced them. The caller must
+        ///  pass the result to [`free_compile_result`] exactly once.
         ///
         ///  A panic inside Typst is caught and reported as an error result rather than unwinding across the
         ///  ABI boundary.
@@ -97,11 +97,34 @@ namespace CsBindgen
         internal static extern void free_compile_result(CompileResult result);
 
         /// <summary>
-        ///  Trims the process-global incremental compilation cache. It holds no references to any
-        ///  [`CompileResult`], so trimming it never invalidates output the caller is still holding.
+        ///  Trims the process-global incremental compilation cache, dropping every result that has not been
+        ///  used in the last ten trims. The managed side calls this after each compilation. The cache holds
+        ///  no references to any [`CompileResult`], so trimming it never invalidates output the caller is
+        ///  still holding.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "reset_world", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void reset_world();
+
+        /// <summary>
+        ///  Clears the process-global incremental compilation cache completely.
+        ///
+        ///  The cache is what makes recompiling a template fast, and what it holds grows with the size of
+        ///  the documents compiled. Because [`reset_world`] keeps results for ten compilations, memory taken
+        ///  by an unusually large document stays allocated until ten more compilations have passed. A
+        ///  document of a few thousand pages can hold on to gigabytes that way. Calling this right after such
+        ///  a compilation releases it at once.
+        ///
+        ///  The cache is shared by every compiler in the process, so the next compilation of every compiler
+        ///  starts cold. Evicting is safe while other threads are compiling: they lose cached results and
+        ///  recompute them, but their output is unaffected. The cache holds no references to any
+        ///  [`CompileResult`], so results the caller is still holding stay valid.
+        ///
+        ///  Returns `false` if the eviction panicked. The panic is caught rather than unwinding across the
+        ///  ABI boundary.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "evict_cache", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool evict_cache();
 
 
     }
