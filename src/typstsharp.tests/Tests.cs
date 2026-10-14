@@ -871,6 +871,71 @@ public class Tests
         await Assert.That(document.Warnings.Count).IsGreaterThan(0);
     }
 
+    [Test]
+    public async Task ReusedCompilerRendersTheSameDocumentAfterTheCacheIsCleared()
+    {
+        // A fixed date keeps the two PDFs comparable byte for byte; otherwise Typst stamps today's.
+        using var compiler = TypstCompiler.FromSource("#set document(date: none)\n= Cached\n\n#lorem(50)");
+        var before = compiler.CompilePdf().Bytes;
+
+        TypstCompiler.EvictCache();
+        var after = compiler.CompilePdf().Bytes;
+
+        await Assert.That(after.SequenceEqual(before)).IsTrue();
+    }
+
+    [Test]
+    public async Task DocumentStaysReadableAfterTheCacheIsCleared()
+    {
+        using var compiler = TypstCompiler.FromSource("= Held across an eviction");
+        using var document = compiler.CompileToDocument();
+
+        TypstCompiler.EvictCache();
+
+        await Assert.That(GetPlainText(document.GetOutputBytes())).Contains("Held across an eviction");
+    }
+
+    /// <summary>
+    /// The cache is shared by every compiler in the process, so an application clearing it after a
+    /// large document does so while other compilations may be running.
+    /// </summary>
+    [Test]
+    public async Task CacheCanBeClearedWhileOtherThreadsCompile()
+    {
+        using var stop = new CancellationTokenSource();
+        var evicting = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                TypstCompiler.EvictCache();
+            }
+        });
+
+        var compiling = Enumerable.Range(0, 4).Select(index => Task.Run(() =>
+        {
+            using var compiler = TypstCompiler.FromSource($"= Thread {index}\n\n#lorem(200)");
+            var texts = new List<string>();
+            for (int i = 0; i < 10; i++)
+            {
+                texts.Add(GetPlainText(compiler.CompilePdf()));
+            }
+
+            return texts;
+        })).ToArray();
+
+        var results = await Task.WhenAll(compiling);
+        await stop.CancelAsync();
+        await evicting;
+
+        for (int index = 0; index < results.Length; index++)
+        {
+            foreach (var text in results[index])
+            {
+                await Assert.That(text).Contains($"Thread {index}");
+            }
+        }
+    }
+
     // An S3 upload hands the stream to the AWS SDK, which reads its length and rewinds to retry.
     [Test]
     public async Task OutputStreamIsSeekableAndCanBeReRead()

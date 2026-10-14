@@ -222,6 +222,37 @@ both its size and its modification time, such as a copy that preserves timestamp
 the same length, is not noticed; a file modified within the last two seconds is always read, so
 an ordinary write is safe even on file systems with coarse timestamps.
 
+### Memory held by the compilation cache
+
+Typst memoises its work in an incremental compilation cache, which is what makes a second compile of
+the same template fast. The cache is shared by every compiler in the process, and after each
+compilation it is trimmed to what one of the last ten compilations used. What it holds grows with
+the size of the documents, so a process that occasionally compiles a document of a few thousand
+pages keeps memory in proportion to it for the next ten compilations. Under a memory limit, a
+handful of large documents in a row can be enough to exceed it.
+
+Clear the cache after an unusually large compilation to release that memory at once:
+
+```csharp
+using (var document = compiler.CompileToDocument())
+{
+    document.CopyOutputTo(destination);
+}
+
+TypstCompiler.EvictCache();
+```
+
+`EvictCache()` clears the cache completely. Because the cache belongs to the process rather than to a
+compiler, that includes the results of every other compiler, in every other component that uses
+typstsharp: the next compilation of each template starts cold. Call it after large documents rather
+than after every compilation. It is safe to call while other threads compile. They lose cached
+results and compute them again, and documents already compiled stay valid.
+
+The packaged Linux library is statically linked against musl, whose allocator reuses freed memory for
+later compilations but rarely hands it back to the operating system, so the resident size stops growing
+rather than shrinking. Clearing the cache does not lower the peak of a single compilation either: to
+bound that, split a large document into several smaller ones and clear the cache between them.
+
 ## Prerequisites
 
 - [.NET SDK 10.0](https://dotnet.microsoft.com/) – required to build the managed projects.

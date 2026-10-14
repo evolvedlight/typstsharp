@@ -10,7 +10,7 @@
 //!   independent heap allocation, and none of them borrows from the compiler that produced them.
 //! - Those allocations stay valid until [`free_compile_result`] is called on the result that owns
 //!   them, whatever else happens in between: further [`compile`] calls, [`set_sys_inputs`],
-//!   [`free_compiler`] on the originating compiler, or [`reset_world`].
+//!   [`free_compiler`] on the originating compiler, [`reset_world`] or [`evict_cache`].
 //! - [`free_compile_result`] may be called from any thread, and must be called exactly once per
 //!   result. Calling it twice frees the same allocations twice.
 //!
@@ -439,9 +439,9 @@ fn compile_internal(
 /// is the distance in points between neighbouring pages, which must be finite and non-negative.
 ///
 /// The returned [`CompileResult`] owns its buffers and messages. They do not borrow from
-/// `compiler`, so they outlive further compilations, [`set_sys_inputs`], [`reset_world`] and even
-/// [`free_compiler`] on the compiler that produced them. The caller must pass the result to
-/// [`free_compile_result`] exactly once.
+/// `compiler`, so they outlive further compilations, [`set_sys_inputs`], [`reset_world`],
+/// [`evict_cache`] and even [`free_compiler`] on the compiler that produced them. The caller must
+/// pass the result to [`free_compile_result`] exactly once.
 ///
 /// A panic inside Typst is caught and reported as an error result rather than unwinding across the
 /// ABI boundary.
@@ -513,11 +513,37 @@ pub unsafe extern "C" fn free_compile_result(result: CompileResult) {
     }
 }
 
-/// Trims the process-global incremental compilation cache. It holds no references to any
-/// [`CompileResult`], so trimming it never invalidates output the caller is still holding.
+/// How many evictions a cached result survives without being used, when the cache is trimmed after
+/// a compilation. With one eviction per compilation, results stay cached for ten compilations.
+const DEFAULT_MAX_CACHE_AGE: usize = 10;
+
+/// Trims the process-global incremental compilation cache, dropping every result that has not been
+/// used in the last ten trims. The managed side calls this after each compilation. The cache holds
+/// no references to any [`CompileResult`], so trimming it never invalidates output the caller is
+/// still holding.
 #[unsafe(no_mangle)]
 pub extern "C" fn reset_world() {
-    comemo::evict(10);
+    comemo::evict(DEFAULT_MAX_CACHE_AGE);
+}
+
+/// Clears the process-global incremental compilation cache completely.
+///
+/// The cache is what makes recompiling a template fast, and what it holds grows with the size of
+/// the documents compiled. Because [`reset_world`] keeps results for ten compilations, memory taken
+/// by an unusually large document stays allocated until ten more compilations have passed. A
+/// document of a few thousand pages can hold on to gigabytes that way. Calling this right after such
+/// a compilation releases it at once.
+///
+/// The cache is shared by every compiler in the process, so the next compilation of every compiler
+/// starts cold. Evicting is safe while other threads are compiling: they lose cached results and
+/// recompute them, but their output is unaffected. The cache holds no references to any
+/// [`CompileResult`], so results the caller is still holding stay valid.
+///
+/// Returns `false` if the eviction panicked. The panic is caught rather than unwinding across the
+/// ABI boundary.
+#[unsafe(no_mangle)]
+pub extern "C" fn evict_cache() -> bool {
+    std::panic::catch_unwind(|| comemo::evict(0)).is_ok()
 }
 
 #[cfg(test)]
