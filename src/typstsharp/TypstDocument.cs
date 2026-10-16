@@ -32,11 +32,18 @@ namespace typstsharp;
 /// </remarks>
 public sealed class TypstDocument : IDisposable
 {
+    // Bit 0 records whether Dispose or the finalizer has run.
+    // Bits 1..30 hold the active reference count: 1 for the document's own lifetime, plus 1 for
+    // each in-flight read, copy, NativeBufferMemoryManager, or pinned MemoryHandle. Native memory
+    // is freed only when Dispose has been requested AND the reference count reaches zero.
+    private const int DisposedBit = 1;
+    private const int OneRef = 2;
+
     private unsafe CsBindgen.CompileResult _native;
     private readonly int _outputCount;
     private readonly IReadOnlyList<string> _warnings;
     private readonly long _nativeByteCount;
-    private int _disposed;
+    private int _state = OneRef;
 
     internal unsafe TypstDocument(CsBindgen.CompileResult native)
     {
@@ -95,7 +102,45 @@ public sealed class TypstDocument : IDisposable
     /// <summary>Warnings reported by the Typst compiler.</summary>
     public IReadOnlyList<string> Warnings => _warnings;
 
-    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+    internal bool IsDisposed => (Volatile.Read(ref _state) & DisposedBit) != 0;
+
+    internal Lease EnterLease()
+    {
+        AcquireLease();
+        return new Lease(this);
+    }
+
+    internal void AcquireLease()
+    {
+        while (true)
+        {
+            int current = Volatile.Read(ref _state);
+            ObjectDisposedException.ThrowIf((current & DisposedBit) != 0, this);
+
+            if (current > int.MaxValue - OneRef)
+            {
+                throw new InvalidOperationException("Maximum concurrent lease count exceeded.");
+            }
+
+            if (Interlocked.CompareExchange(ref _state, current + OneRef, current) == current)
+            {
+                return;
+            }
+        }
+    }
+
+    internal void ReleaseLease()
+    {
+        if (Interlocked.Add(ref _state, -OneRef) == DisposedBit)
+        {
+            FreeCore();
+        }
+    }
+
+    internal readonly struct Lease(TypstDocument document) : IDisposable
+    {
+        public void Dispose() => document.ReleaseLease();
+    }
 
     /// <summary>
     /// The length in bytes of one output buffer, without touching its content. Useful for setting a
@@ -104,9 +149,8 @@ public sealed class TypstDocument : IDisposable
     /// <param name="output">The zero-based buffer index; defaults to the only buffer of a PDF.</param>
     public unsafe long GetOutputLength(int output = 0)
     {
-        long length = (long)GetBuffer(output).len;
-        KeepAlive();
-        return length;
+        using var _ = EnterLease();
+        return (long)GetBuffer(output).len;
     }
 
     /// <summary>
@@ -133,6 +177,7 @@ public sealed class TypstDocument : IDisposable
     /// <param name="output">The zero-based buffer index; defaults to the only buffer of a PDF.</param>
     public unsafe Stream OpenOutputStream(int output = 0)
     {
+        using var _ = EnterLease();
         var buffer = GetBuffer(output);
         return new OutputStream(this, buffer.ptr, (long)buffer.len);
     }
@@ -145,8 +190,8 @@ public sealed class TypstDocument : IDisposable
     public unsafe void CopyOutputTo(Stream destination, int output = 0)
     {
         ArgumentNullException.ThrowIfNull(destination);
+        using var _ = EnterLease();
         destination.Write(GetOutputSpan(output));
-        KeepAlive();
     }
 
     /// <summary>
@@ -177,13 +222,12 @@ public sealed class TypstDocument : IDisposable
     /// <param name="output">The zero-based buffer index; defaults to the only buffer of a PDF.</param>
     public unsafe void WriteOutputToFile(string path, int output = 0)
     {
+        using var _ = EnterLease();
         var content = GetOutputSpan(output);
         using (var handle = OpenFile(path, content.Length, FileOptions.None))
         {
             RandomAccess.Write(handle, content, fileOffset: 0);
         }
-
-        KeepAlive();
     }
 
     /// <summary>
@@ -213,10 +257,10 @@ public sealed class TypstDocument : IDisposable
     /// </returns>
     public unsafe IMemoryOwner<byte> RentOutput(int output = 0)
     {
+        using var _ = EnterLease();
         var content = GetOutputSpan(output);
         var owner = new PooledBuffer(content.Length);
         content.CopyTo(owner.Span);
-        KeepAlive();
         return owner;
     }
 
@@ -227,9 +271,8 @@ public sealed class TypstDocument : IDisposable
     /// <param name="output">The zero-based buffer index; defaults to the only buffer of a PDF.</param>
     public unsafe byte[] GetOutputBytes(int output = 0)
     {
-        var bytes = GetOutputSpan(output).ToArray();
-        KeepAlive();
-        return bytes;
+        using var _ = EnterLease();
+        return GetOutputSpan(output).ToArray();
     }
 
     private static SafeFileHandle OpenFile(string path, long length, FileOptions options) =>
@@ -249,6 +292,7 @@ public sealed class TypstDocument : IDisposable
     /// </summary>
     private unsafe NativeBufferMemoryManager CreateBufferManager(int output)
     {
+        using var _ = EnterLease();
         var buffer = GetBuffer(output);
         return new NativeBufferMemoryManager(this, buffer.ptr, ToLength(buffer.len));
     }
@@ -302,17 +346,36 @@ public sealed class TypstDocument : IDisposable
         Free();
     }
 
-    private unsafe void Free()
+    private void Free()
     {
-        // Exchange rather than a plain bool check: a double free corrupts the native heap, which is a
-        // far worse outcome than the torn reads the rest of the type tolerates.
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        // Mark the document disposed and drop its own lifetime reference. If any lease or pinned
+        // MemoryHandle is still active, the last ReleaseLease() will run FreeCore() when it finishes.
+        while (true)
         {
-            return;
-        }
+            int current = Volatile.Read(ref _state);
+            if ((current & DisposedBit) != 0)
+            {
+                return;
+            }
 
-        CsBindgen.NativeMethods.free_compile_result(_native);
+            int next = (current - OneRef) | DisposedBit;
+            if (Interlocked.CompareExchange(ref _state, next, current) == current)
+            {
+                if (next == DisposedBit)
+                {
+                    FreeCore();
+                }
+
+                return;
+            }
+        }
+    }
+
+    private unsafe void FreeCore()
+    {
+        var native = _native;
         _native = default;
+        CsBindgen.NativeMethods.free_compile_result(native);
         if (_nativeByteCount > 0)
         {
             GC.RemoveMemoryPressure(_nativeByteCount);
@@ -353,7 +416,7 @@ public sealed class TypstDocument : IDisposable
         /// </remarks>
         public override unsafe int Read(Span<byte> buffer)
         {
-            ObjectDisposedException.ThrowIf(_owner.IsDisposed, _owner);
+            using var _ = _owner.EnterLease();
 
             long position = Position;
 
@@ -370,7 +433,6 @@ public sealed class TypstDocument : IDisposable
             int count = (int)Math.Min((long)buffer.Length, available);
             new ReadOnlySpan<byte>(_pointer + position, count).CopyTo(buffer);
             Position = position + count;
-            GC.KeepAlive(_owner);
             return count;
         }
 
@@ -384,10 +446,8 @@ public sealed class TypstDocument : IDisposable
 
         public override int ReadByte()
         {
-            ObjectDisposedException.ThrowIf(_owner.IsDisposed, _owner);
-            int value = base.ReadByte();
-            GC.KeepAlive(_owner);
-            return value;
+            using var _ = _owner.EnterLease();
+            return base.ReadByte();
         }
 
         /// <summary>
@@ -403,7 +463,7 @@ public sealed class TypstDocument : IDisposable
         public override unsafe void CopyTo(Stream destination, int bufferSize)
         {
             ValidateCopyToArguments(destination, bufferSize);
-            ObjectDisposedException.ThrowIf(_owner.IsDisposed, _owner);
+            using var _ = _owner.EnterLease();
 
             long position = Position;
             long remaining = Length - position;
@@ -416,8 +476,6 @@ public sealed class TypstDocument : IDisposable
                 remaining -= chunk;
                 Position = position;
             }
-
-            GC.KeepAlive(_owner);
         }
 
         /// <inheritdoc cref="CopyTo(Stream, int)"/>

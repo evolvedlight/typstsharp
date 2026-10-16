@@ -1410,6 +1410,98 @@ public class Tests
         await Assert.That(document.Warnings.Count).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task FontPathsWithNullOrEmptyEntriesAreIgnoredSafely()
+    {
+        using var compiler = TypstCompiler.FromSource(
+            "= Null font path entry",
+            fonts: new Fonts(IncludeSystemFonts: false, FontPaths: [null!, ""]));
+
+        var plainText = GetPlainText(compiler.CompilePdf());
+        await Assert.That(plainText).Contains("Null font path entry");
+    }
+
+    [Test]
+    public async Task DisposingCompilerConcurrentlyIsSafe()
+    {
+        var compiler = TypstCompiler.FromSource("= Concurrent dispose");
+        using var barrier = new Barrier(8);
+
+        var tasks = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            compiler.Dispose();
+        })).ToArray();
+
+        await Task.WhenAll(tasks);
+
+        await Assert.That(() => compiler.CompilePdf()).Throws<ObjectDisposedException>();
+        await Assert.That(() => compiler.SetSysInputs(new Dictionary<string, string>())).Throws<ObjectDisposedException>();
+    }
+
+    /// <summary>
+    /// If a document is disposed while an asynchronous write still has the native buffer pinned
+    /// (for instance when a cancellation token unwinds a caller's using scope while OS overlapped
+    /// I/O is still in flight), freeing must wait until the pin and lease are released.
+    /// </summary>
+    [Test]
+    public async Task DisposingDocumentWhileBufferIsPinnedDefersFreeUntilUnpinned()
+    {
+        using var compiler = TypstCompiler.FromSource("= Pinned across disposal\n\n#lorem(100)");
+        var document = compiler.CompileToDocument();
+        var expected = document.GetOutputBytes();
+
+        var pinnedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disposedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sink = new PinningAsyncStream(pinnedSignal, disposedSignal);
+
+        var writeTask = document.CopyOutputToAsync(sink).AsTask();
+
+        await pinnedSignal.Task;
+
+        // Dispose the document while the stream still holds a MemoryHandle pin over its native buffer.
+        document.Dispose();
+
+        // New operations must immediately observe that the document is disposed.
+        await Assert.That(() => document.GetOutputBytes()).Throws<ObjectDisposedException>();
+
+        // Let the in-flight pinned write read from the pointer and then unpin.
+        disposedSignal.SetResult();
+        var captured = await writeTask.ContinueWith(_ => sink.CapturedBytes);
+
+        await Assert.That(captured.SequenceEqual(expected)).IsTrue();
+    }
+
+    private sealed class PinningAsyncStream(
+        TaskCompletionSource pinnedSignal,
+        TaskCompletionSource disposedSignal) : Stream
+    {
+        public byte[] CapturedBytes { get; private set; } = [];
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            using var handle = buffer.Pin();
+            pinnedSignal.SetResult();
+            await disposedSignal.Task.ConfigureAwait(false);
+
+            CapturedBytes = CopyFromHandle(handle, buffer.Length);
+        }
+
+        private static unsafe byte[] CopyFromHandle(MemoryHandle handle, int length) =>
+            new ReadOnlySpan<byte>(handle.Pointer, length).ToArray();
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private const string TwoPageSource = """
                                          First page
                                          #pagebreak()
