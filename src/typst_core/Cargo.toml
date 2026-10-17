@@ -36,3 +36,12 @@ typst-layout = "0.15.1"
 
 [build-dependencies]
 csbindgen = "1.9.7"
+
+# The settings Typst itself is released with. A single codegen unit and thin LTO let
+# the optimiser see across crate boundaries and drop what the exported functions never
+# reach, which makes the native library about 6% smaller. Speed is within measurement
+# noise. The cost is a slower release build. `panic` must stay at its default,
+# `unwind`: `compile` catches panics so that they never cross the C ABI.
+[profile.release]
+lto = "thin"
+codegen-units = 1
