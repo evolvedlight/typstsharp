@@ -34,10 +34,7 @@ fn export_image(
             )
             .encode_png()
             .map_err(|err| eco_format!("failed to write PNG file ({err})"))?,
-            ImageExportFormat::Svg => {
-                let svg = typst_svg::svg(page, &svg_options());
-                svg.as_bytes().to_vec()
-            }
+            ImageExportFormat::Svg => typst_svg::svg(page, &svg_options()).into_bytes(),
         };
         buffers.push(buffer);
     }
