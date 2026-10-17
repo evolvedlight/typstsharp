@@ -5,6 +5,18 @@ using System.Text.Json.Serialization;
 
 namespace typstsharp;
 
+/// <summary>
+/// The fonts a compiler can use: the fonts installed on the system, if included, the fonts
+/// embedded in Typst, and those found in <paramref name="FontPaths"/>.
+/// </summary>
+/// <param name="IncludeSystemFonts">Whether the fonts installed on the system are available.</param>
+/// <param name="FontPaths">Directories searched recursively for additional fonts.</param>
+/// <remarks>
+/// Fonts are discovered the first time a compiler with a given combination of these settings is
+/// created, and every later compiler with the same settings shares that discovery and the fonts it
+/// has loaded. A font installed or added to one of the directories afterwards is not seen until the
+/// process restarts. Loaded fonts stay in memory for the life of the process.
+/// </remarks>
 public record Fonts(
     bool IncludeSystemFonts = true,
     IEnumerable<string>? FontPaths = null
