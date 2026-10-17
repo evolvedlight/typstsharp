@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::SystemTime;
 
 use ecow::eco_format;
@@ -11,6 +11,7 @@ use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
+use typst_kit::fonts::FontStore;
 use typst_kit::packages::{FsPackages, SystemPackages, UniversePackages};
 
 /// A world that provides access to the operating system.
@@ -21,10 +22,9 @@ pub struct SystemWorld {
     main: FileId,
     /// Typst's standard library.
     library: LazyHash<Library>,
-    /// Metadata about discovered fonts.
-    book: LazyHash<FontBook>,
-    /// Locations of and storage for lazily loaded fonts.
-    fonts: Arc<typst_kit::fonts::FontStore>,
+    /// Locations of and storage for lazily loaded fonts, shared with every other world
+    /// that has the same font configuration.
+    fonts: Arc<FontStore>,
     /// Maps file ids to source files and buffers.
     slots: Mutex<HashMap<FileId, FileSlot>>,
     /// Holds information about where packages are stored.
@@ -40,7 +40,7 @@ impl World for SystemWorld {
     }
 
     fn book(&self) -> &LazyHash<FontBook> {
-        &self.book
+        self.fonts.book()
     }
 
     fn main(&self) -> FileId {
@@ -75,17 +75,7 @@ impl SystemWorld {
         include_system_fonts: bool,
         include_system_packages: bool,
     ) -> StrResult<Self> {
-        let mut fonts = typst_kit::fonts::FontStore::new();
-
-        if include_system_fonts {
-            fonts.extend(typst_kit::fonts::system());
-        }
-
-        fonts.extend(typst_kit::fonts::embedded());
-
-        for path in font_paths {
-            fonts.extend(typst_kit::fonts::scan(path));
-        }
+        let fonts = shared_font_store(include_system_fonts, font_paths);
 
         // Resolve the main file path relative to the root. A relative input path is
         // taken to be relative to the root, so joining it onto the root first leaves
@@ -119,8 +109,6 @@ impl SystemWorld {
             slots.insert(main_id, main_slot);
         }
 
-        let book = fonts.book().clone();
-
         // Packages are looked up in the configured directory first, then in the
         // machine-wide data and cache directories, and are finally downloaded from
         // Typst Universe. Dropping the last two is what a deployment that ships its
@@ -148,8 +136,7 @@ impl SystemWorld {
                     .with_inputs(inputs)
                     .build(),
             ),
-            book,
-            fonts: Arc::new(fonts),
+            fonts,
             slots: Mutex::new(slots),
             packages: SystemPackages::from_parts(
                 package_data,
@@ -205,6 +192,51 @@ impl SystemWorld {
         let mut map = self.slots.lock().unwrap();
         f(map.entry(id).or_insert_with(|| FileSlot::new(id)))
     }
+}
+
+/// Which fonts a world can see: whether the system fonts are included, and the extra
+/// directories scanned, in the order given.
+type FontConfig = (bool, Vec<PathBuf>);
+
+/// Returns the font store for a font configuration, building it on first use.
+///
+/// Building one scans every font on the system, which takes tens of milliseconds and is
+/// most of what creating a world costs. A store also loads each font it hands out into
+/// memory of its own. Sharing one store per configuration across the process pays for
+/// the scan once, and keeps a single copy of every font however many worlds use it.
+///
+/// Stores are kept for the life of the process, also after the last world using one is
+/// gone, so a caller that creates a world per compilation scans only the first time.
+/// The price is that a font installed after its configuration was first scanned is not
+/// seen until the process restarts.
+///
+/// The lock is held while a store is built, so concurrent first uses scan once rather
+/// than racing. A world created during a scan waits for it even if its own store is
+/// already built; that happens once per configuration, so the cost is bounded. A panic during
+/// the scan leaves the map as it was, since the store is inserted only once complete, so
+/// a poisoned lock is recovered rather than failing every later world.
+fn shared_font_store(include_system_fonts: bool, font_paths: &[PathBuf]) -> Arc<FontStore> {
+    static STORES: OnceLock<Mutex<HashMap<FontConfig, Arc<FontStore>>>> = OnceLock::new();
+
+    let mut stores = STORES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+
+    stores
+        .entry((include_system_fonts, font_paths.to_vec()))
+        .or_insert_with(|| {
+            let mut fonts = FontStore::new();
+            if include_system_fonts {
+                fonts.extend(typst_kit::fonts::system());
+            }
+            fonts.extend(typst_kit::fonts::embedded());
+            for path in font_paths {
+                fonts.extend(typst_kit::fonts::scan(path));
+            }
+            Arc::new(fonts)
+        })
+        .clone()
 }
 
 struct FileSlot {
@@ -928,5 +960,64 @@ mod tests {
         assert!(!stamp.is_settled(modified + RACY_WINDOW - millis(1)));
         assert!(stamp.is_settled(modified + RACY_WINDOW));
         assert!(stamp.is_settled(modified + std::time::Duration::from_secs(3600)));
+    }
+
+    /// A world over an in-memory document with the given font configuration.
+    fn world_with_fonts(font_paths: &[PathBuf], include_system_fonts: bool) -> SystemWorld {
+        SystemWorld::new(
+            PathBuf::from("."),
+            font_paths,
+            None,
+            typst::foundations::Dict::new(),
+            None,
+            Some(String::new()),
+            include_system_fonts,
+            false,
+        )
+        .unwrap()
+    }
+
+    /// Scanning the system fonts is most of what creating a compiler costs, and every
+    /// compiler would otherwise read the fonts it uses into memory of its own.
+    #[test]
+    fn worlds_with_the_same_fonts_share_one_font_store() {
+        for include_system_fonts in [false, true] {
+            let first = world_with_fonts(&[], include_system_fonts);
+            let second = world_with_fonts(&[], include_system_fonts);
+            assert!(Arc::ptr_eq(&first.fonts, &second.fonts));
+        }
+    }
+
+    /// The one-shot helpers on the managed side create a compiler, compile once and free
+    /// it. The store has to survive that, or each of them would scan again.
+    #[test]
+    fn the_font_store_outlives_the_worlds_that_use_it() {
+        let first = world_with_fonts(&[], false);
+        let store = Arc::as_ptr(&first.fonts);
+        drop(first);
+
+        let second = world_with_fonts(&[], false);
+        assert_eq!(store, Arc::as_ptr(&second.fonts));
+    }
+
+    /// Each font configuration finds a different set of fonts, so none may be served
+    /// another's store.
+    #[test]
+    fn worlds_with_different_fonts_get_different_font_stores() {
+        let dir = TempDir::new("font-store");
+        let other_dir = TempDir::new("font-store-other");
+
+        let plain = world_with_fonts(&[], false);
+        let with_system = world_with_fonts(&[], true);
+        let with_dir = world_with_fonts(&[dir.path.clone()], false);
+        let with_other_dir = world_with_fonts(&[other_dir.path.clone()], false);
+
+        let stores = [&plain, &with_system, &with_dir, &with_other_dir]
+            .map(|world| Arc::as_ptr(&world.fonts));
+        for (i, a) in stores.iter().enumerate() {
+            for b in &stores[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
     }
 }
