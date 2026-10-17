@@ -14,7 +14,7 @@ public class TypstCompiler : IDisposable
 {
     public static string EmptyDictionaryJson => "{}";
     private unsafe CsBindgen.Compiler* _compiler;
-    private bool _disposed = false;
+    private int _disposed;
     private static readonly JsonSerializerOptions sourceGenOptions = new()
     {
         TypeInfoResolver = SourceGenerationContext.Default
@@ -698,7 +698,7 @@ public class TypstCompiler : IDisposable
     /// <exception cref="Exception">Thrown if the inputs fail to be set in the native compiler.</exception>
     public unsafe void SetSysInputs(IDictionary<string, string> inputs)
     {
-        if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
+        EnsureNotDisposed();
 
         var sysInputsJson = JsonSerializer.Serialize<IDictionary<string, string>>(inputs, sourceGenOptions);
         var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
@@ -727,18 +727,17 @@ public class TypstCompiler : IDisposable
 
     protected virtual unsafe void Dispose(bool disposing)
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
         }
 
-        if (_compiler != null)
+        var compiler = _compiler;
+        _compiler = null;
+        if (compiler != null)
         {
-            CsBindgen.NativeMethods.free_compiler(_compiler);
-            _compiler = null;
+            CsBindgen.NativeMethods.free_compiler(compiler);
         }
-
-        _disposed = true;
     }
 
     ~TypstCompiler()
@@ -748,10 +747,7 @@ public class TypstCompiler : IDisposable
 
     private void EnsureNotDisposed()
     {
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(nameof(TypstCompiler));
-        }
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
     }
 }
 

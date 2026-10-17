@@ -17,9 +17,11 @@ internal sealed unsafe class NativeBufferMemoryManager : MemoryManager<byte>
     private readonly TypstDocument _owner;
     private readonly byte* _pointer;
     private readonly int _length;
+    private int _disposed;
 
     public NativeBufferMemoryManager(TypstDocument owner, byte* pointer, int length)
     {
+        owner.AcquireLease();
         _owner = owner;
         _pointer = pointer;
         _length = length;
@@ -27,34 +29,46 @@ internal sealed unsafe class NativeBufferMemoryManager : MemoryManager<byte>
 
     public override Span<byte> GetSpan()
     {
-        ObjectDisposedException.ThrowIf(_owner.IsDisposed, _owner);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         return new Span<byte>(_pointer, _length);
     }
 
     /// <summary>
-    /// Native memory is never relocated by the GC, so pinning is a no-op and only has to hand back
-    /// the address of the requested element. One past the end is allowed, matching the semantics of
-    /// <see cref="Memory{T}"/> over an array.
+    /// Acquires a lease on the owning <see cref="TypstDocument"/> for the lifetime of the returned
+    /// <see cref="MemoryHandle"/> so that disposing the document while an asynchronous I/O operation
+    /// still has the buffer pinned defers freeing the native memory until <see cref="Unpin"/> runs.
     /// </summary>
     public override MemoryHandle Pin(int elementIndex = 0)
     {
-        ObjectDisposedException.ThrowIf(_owner.IsDisposed, _owner);
-
-        if ((uint)elementIndex > (uint)_length)
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        _owner.AcquireLease();
+        try
         {
-            throw new ArgumentOutOfRangeException(nameof(elementIndex));
-        }
+            if ((uint)elementIndex > (uint)_length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(elementIndex));
+            }
 
-        return new MemoryHandle(_pointer + elementIndex);
+            return new MemoryHandle(_pointer + elementIndex, default, this);
+        }
+        catch
+        {
+            _owner.ReleaseLease();
+            throw;
+        }
     }
 
     public override void Unpin()
     {
+        _owner.ReleaseLease();
     }
 
     protected override void Dispose(bool disposing)
     {
-        GC.KeepAlive(_owner);
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            _owner.ReleaseLease();
+        }
     }
 }
 

@@ -24,11 +24,11 @@ namespace CsBindgen
         ///  # Safety
         ///
         ///  `root`, `input_path`, `package_path` and `sys_inputs` must be null or NUL-terminated strings,
-        ///  `font_paths` must be null or point to `font_paths_len` such strings, and `input_source` must be
-        ///  null or point to `input_source_len` bytes. Unlike the others, the source is passed with an
-        ///  explicit length and may contain NUL bytes. All of them need only stay valid for the duration of
-        ///  the call. The returned compiler is owned by the caller and must be released with
-        ///  [`free_compiler`].
+        ///  `font_paths` must be null or point to `font_paths_len` such strings (each of which may also be
+        ///  null), and `input_source` must be null or point to `input_source_len` bytes. Unlike the others,
+        ///  the source is passed with an explicit length and may contain NUL bytes. All of them need only
+        ///  stay valid for the duration of the call. The returned compiler is owned by the caller and must
+        ///  be released with [`free_compiler`].
         /// </summary>
         [DllImport(__DllName, EntryPoint = "create_compiler", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern Compiler* create_compiler(byte* root, byte* input_path, byte* input_source, nuint input_source_len, byte** font_paths, nuint font_paths_len, byte* package_path, byte* sys_inputs, [MarshalAs(UnmanagedType.U1)] bool ignore_system_fonts, [MarshalAs(UnmanagedType.U1)] bool ignore_system_packages);

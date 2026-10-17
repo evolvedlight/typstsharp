@@ -87,18 +87,7 @@ impl Default for CompileResult {
     }
 }
 
-/// Creates a compiler that reads its document either from `input_path` or from `input_source`.
-///
-/// # Safety
-///
-/// `root`, `input_path`, `package_path` and `sys_inputs` must be null or NUL-terminated strings,
-/// `font_paths` must be null or point to `font_paths_len` such strings, and `input_source` must be
-/// null or point to `input_source_len` bytes. Unlike the others, the source is passed with an
-/// explicit length and may contain NUL bytes. All of them need only stay valid for the duration of
-/// the call. The returned compiler is owned by the caller and must be released with
-/// [`free_compiler`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn create_compiler(
+unsafe fn create_compiler_inner(
     root: *const c_char,
     input_path: *const c_char,
     input_source: *const u8,
@@ -139,12 +128,18 @@ pub unsafe extern "C" fn create_compiler(
     // which means an empty document.
     let input_content = if input_source.is_null() {
         None
+    } else if input_source_len == 0 {
+        Some(String::new())
     } else {
         let bytes = unsafe { std::slice::from_raw_parts(input_source, input_source_len) };
         Some(String::from_utf8_lossy(bytes).into_owned())
     };
 
-    let sys_inputs_str = unsafe { CStr::from_ptr(sys_inputs).to_str().unwrap_or("{}") };
+    let sys_inputs_str = if sys_inputs.is_null() {
+        "{}"
+    } else {
+        unsafe { CStr::from_ptr(sys_inputs).to_str().unwrap_or("{}") }
+    };
 
     let font_paths_vec: Vec<PathBuf> = unsafe {
         let slice: &[*const c_char] = if font_paths.is_null() || font_paths_len == 0 {
@@ -155,7 +150,12 @@ pub unsafe extern "C" fn create_compiler(
 
         slice
             .iter()
-            .map(|&p| PathBuf::from(CStr::from_ptr(p).to_str().unwrap_or("")))
+            .copied()
+            .filter(|p| !p.is_null())
+            .filter_map(|p| {
+                let s = CStr::from_ptr(p).to_str().unwrap_or("");
+                (!s.is_empty()).then(|| PathBuf::from(s))
+            })
             .collect()
     };
 
@@ -187,6 +187,46 @@ pub unsafe extern "C" fn create_compiler(
     }
 }
 
+/// Creates a compiler that reads its document either from `input_path` or from `input_source`.
+///
+/// # Safety
+///
+/// `root`, `input_path`, `package_path` and `sys_inputs` must be null or NUL-terminated strings,
+/// `font_paths` must be null or point to `font_paths_len` such strings (each of which may also be
+/// null), and `input_source` must be null or point to `input_source_len` bytes. Unlike the others,
+/// the source is passed with an explicit length and may contain NUL bytes. All of them need only
+/// stay valid for the duration of the call. The returned compiler is owned by the caller and must
+/// be released with [`free_compiler`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn create_compiler(
+    root: *const c_char,
+    input_path: *const c_char,
+    input_source: *const u8,
+    input_source_len: usize,
+    font_paths: *const *const c_char,
+    font_paths_len: usize,
+    package_path: *const c_char,
+    sys_inputs: *const c_char,
+    ignore_system_fonts: bool,
+    ignore_system_packages: bool,
+) -> *mut Compiler {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        create_compiler_inner(
+            root,
+            input_path,
+            input_source,
+            input_source_len,
+            font_paths,
+            font_paths_len,
+            package_path,
+            sys_inputs,
+            ignore_system_fonts,
+            ignore_system_packages,
+        )
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Releases a compiler created by [`create_compiler`]. A null pointer is ignored.
 ///
 /// Results previously returned by [`compile`] are unaffected: they own their memory and stay valid.
@@ -197,11 +237,13 @@ pub unsafe extern "C" fn create_compiler(
 /// freed, and no other thread may be using it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_compiler(compiler: *mut Compiler) {
-    if !compiler.is_null() {
-        unsafe {
-            let _ = Box::from_raw(compiler);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if !compiler.is_null() {
+            unsafe {
+                let _ = Box::from_raw(compiler);
+            }
         }
-    }
+    }));
 }
 
 /// Replaces the `sys.inputs` dictionary the next compilation will see. Returns `false` if the
@@ -213,26 +255,26 @@ pub unsafe extern "C" fn free_compiler(compiler: *mut Compiler) {
 /// null or a NUL-terminated JSON object that stays valid for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn set_sys_inputs(compiler: *mut Compiler, sys_inputs: *const c_char) -> bool {
-    if compiler.is_null() {
-        return false;
-    }
-    let compiler = unsafe { &mut *compiler };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if compiler.is_null() {
+            return false;
+        }
+        let compiler = unsafe { &mut *compiler };
 
-    let sys_inputs_str = if sys_inputs.is_null() {
-        "{}"
-    } else {
-        unsafe { CStr::from_ptr(sys_inputs).to_str().unwrap_or("{}") }
-    };
+        let sys_inputs_str = if sys_inputs.is_null() {
+            "{}"
+        } else {
+            unsafe { CStr::from_ptr(sys_inputs).to_str().unwrap_or("{}") }
+        };
 
-    let inputs: Dict = match serde_json::from_str(sys_inputs_str) {
-        Ok(d) => d,
-        Err(_) => return false,
-    };
+        let inputs: Dict = match serde_json::from_str(sys_inputs_str) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
 
-    match compiler.0.set_inputs(inputs) {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+        compiler.0.set_inputs(inputs).is_ok()
+    }))
+    .unwrap_or(false)
 }
 
 fn compile_inner(
@@ -488,7 +530,7 @@ pub unsafe extern "C" fn compile(
 /// result frees the same allocations twice.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_compile_result(result: CompileResult) {
-    unsafe {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         if !result.buffers.is_null() {
             let buffers = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
                 result.buffers,
@@ -510,7 +552,7 @@ pub unsafe extern "C" fn free_compile_result(result: CompileResult) {
         if !result.error_ptr.is_null() {
             free_raw_slice(result.error_ptr, result.error_len);
         }
-    }
+    }));
 }
 
 /// How many evictions a cached result survives without being used, when the cache is trimmed after
@@ -523,7 +565,7 @@ const DEFAULT_MAX_CACHE_AGE: usize = 10;
 /// still holding.
 #[unsafe(no_mangle)]
 pub extern "C" fn reset_world() {
-    comemo::evict(DEFAULT_MAX_CACHE_AGE);
+    let _ = std::panic::catch_unwind(|| comemo::evict(DEFAULT_MAX_CACHE_AGE));
 }
 
 /// Clears the process-global incremental compilation cache completely.

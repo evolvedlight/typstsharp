@@ -198,3 +198,30 @@ fn the_cache_can_be_cleared_while_other_threads_compile() {
 
     assert!(evictions > 0, "no eviction overlapped the compilations");
 }
+
+#[test]
+fn create_compiler_accepts_null_sys_inputs_and_null_font_path_entries() {
+    let source = b"= Null pointer resilience";
+    let font_paths: [*const c_char; 2] = [std::ptr::null(), std::ptr::null()];
+
+    let compiler = unsafe {
+        create_compiler(
+            std::ptr::null(),
+            std::ptr::null(),
+            source.as_ptr(),
+            source.len(),
+            font_paths.as_ptr(),
+            font_paths.len(),
+            std::ptr::null(),
+            std::ptr::null(),
+            true,
+            true,
+        )
+    };
+    assert!(!compiler.is_null(), "failed to create compiler with null sys_inputs and font_paths");
+
+    let pdf = compile_to_pdf(compiler);
+    assert!(pdf.starts_with(b"%PDF-"));
+
+    unsafe { free_compiler(compiler) };
+}
