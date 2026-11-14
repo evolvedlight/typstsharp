@@ -3,7 +3,7 @@ description: Builds and packs the Typst.Net Nuget package including native depen
 inputs:
   dotnet-version:
     description: .NET SDK version to install
-    default: 10.x
+    default: 11.x
   rust-version:
     description: Rust toolchain version to install
     default: 1.91.1
