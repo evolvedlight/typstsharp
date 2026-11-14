@@ -1,0 +1,12 @@
+{
+  global:
+    create_compiler;
+    free_compiler;
+    set_sys_inputs;
+    compile;
+    free_compile_result;
+    reset_world;
+    evict_cache;
+  local:
+    *;
+};
