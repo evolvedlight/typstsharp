@@ -1,6 +1,6 @@
 # typstsharp
 
-A .NET 10.0 wrapper around the Typst 0.15 rendering stack. The managed layer in `src/typstsharp` calls into the Rust `typst_core` crate via P/Invoke and exposes convenient helpers for C# consumers plus a simple CLI.
+A .NET 11.0 wrapper around the Typst 0.15 rendering stack. The managed layer in `src/typstsharp` calls into the Rust `typst_core` crate via P/Invoke and exposes convenient helpers for C# consumers plus a simple CLI.
 
 For the latest changes, see our [Release Notes](RELEASENOTES.md).
 
@@ -255,7 +255,7 @@ bound that, split a large document into several smaller ones and clear the cache
 
 ## Prerequisites
 
-- [.NET SDK 10.0](https://dotnet.microsoft.com/) – required to build the managed projects.
+- [.NET SDK 11.0](https://dotnet.microsoft.com/) – required to build the managed projects.
 - [Rust toolchain](https://www.rust-lang.org/tools/install) (with `cargo`) – **only required if you are building the project from source.** The NuGet package includes pre-compiled native binaries.
 
 ## Building

@@ -98,7 +98,7 @@ jobs:
         if: matrix.test_type == ''
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.x
+          dotnet-version: 11.x
 
       - name: Run tests (Windows / Ubuntu)
         if: matrix.test_type == ''
@@ -115,7 +115,7 @@ jobs:
         if: matrix.test_type == 'docker-alpine'
         shell: bash
         run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace mcr.microsoft.com/dotnet/sdk:10.0-alpine sh -c "
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace mcr.microsoft.com/dotnet/sdk:11.0-alpine sh -c "
             dotnet nuget add source /workspace/artifacts --name local-artifacts
             dotnet nuget locals all --clear
             dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
@@ -128,7 +128,7 @@ jobs:
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace fedora:40 sh -c "
             dnf install -y curl tar icu
-            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 10.0 --install-dir /usr/share/dotnet
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 11.0 --install-dir /usr/share/dotnet
             ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet
             dotnet nuget add source /workspace/artifacts --name local-artifacts
             dotnet nuget locals all --clear
