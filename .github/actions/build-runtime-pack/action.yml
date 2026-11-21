@@ -2,10 +2,10 @@ name: Build typstsharp runtime package
 description: Builds typst_core and packs the per-RID typstsharp.runtime.<rid> NuGet package
 inputs:
   rid:
-    description: Target .NET Runtime Identifier (e.g. win-x64, win-arm64, linux-x64, linux-arm64, osx-arm64)
+    description: Target .NET Runtime Identifier (e.g. win-x64, win-arm64, linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, osx-arm64)
     required: true
   rust-target:
-    description: Rust target triple (e.g. x86_64-pc-windows-msvc, aarch64-unknown-linux-musl)
+    description: Rust target triple (e.g. x86_64-pc-windows-msvc, aarch64-unknown-linux-gnu, aarch64-unknown-linux-musl)
     required: true
   package-version:
     description: NuGet package version
@@ -19,8 +19,8 @@ inputs:
   output-directory:
     description: Output directory for packed artifacts
     default: artifacts
-  musl-compiler:
-    description: Optional musl-gcc wrapper name to symlink on Linux (e.g. x86_64-linux-musl-gcc, aarch64-linux-musl-gcc)
+  docker-image:
+    description: Optional Linux container image used to build libtypst_core.so (e.g. manylinux_2_28 for glibc or rust:alpine for musl)
     required: false
 runs:
   using: composite
@@ -30,26 +30,8 @@ runs:
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
 
-    - name: Install Linux build prerequisites
-      if: runner.os == 'Linux'
-      shell: bash
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          build-essential \
-          pkg-config \
-          libssl-dev \
-          llvm \
-          clang \
-          zlib1g-dev \
-          ca-certificates \
-          musl-tools
-        if [ -n "${{ inputs.musl-compiler }}" ] && [ ! -e "/usr/local/bin/${{ inputs.musl-compiler }}" ]; then
-          sudo ln -s "$(which musl-gcc)" "/usr/local/bin/${{ inputs.musl-compiler }}"
-        fi
-
-    - name: Install Rust toolchain
+    - name: Install Rust toolchain (host)
+      if: inputs.docker-image == ''
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: ${{ inputs.rust-version }}
@@ -57,7 +39,90 @@ runs:
         cache-workspaces: src/typst_core
         rust-src-dir: src/typst_core
 
-    - name: Pack typstsharp.runtime.${{ inputs.rid }}
+    - name: Cache Cargo artifacts (container)
+      if: inputs.docker-image != ''
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ runner.temp }}/cargo-cache/cargo/registry/index
+          ${{ runner.temp }}/cargo-cache/cargo/registry/cache
+          ${{ runner.temp }}/cargo-cache/cargo/git/db
+          ${{ runner.temp }}/cargo-cache/target
+        key: container-cargo-${{ inputs.rid }}-${{ inputs.rust-version }}-${{ hashFiles('src/typst_core/Cargo.lock') }}
+        restore-keys: |
+          container-cargo-${{ inputs.rid }}-${{ inputs.rust-version }}-
+
+    - name: Build native library in container (${{ inputs.rid }})
+      if: inputs.docker-image != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ runner.temp }}/cargo-cache/cargo" "${{ runner.temp }}/cargo-cache/target" "${{ github.workspace }}/native-out"
+        docker run --rm \
+          -v "${{ github.workspace }}:/workspace" \
+          -v "${{ runner.temp }}/cargo-cache:/cargo-cache" \
+          -w /workspace \
+          -e "RUST_VERSION=${{ inputs.rust-version }}" \
+          -e "RUST_TARGET=${{ inputs.rust-target }}" \
+          -e "HOST_UID=$(id -u)" \
+          -e "HOST_GID=$(id -g)" \
+          -e "CARGO_HOME=/cargo-cache/cargo" \
+          -e "CARGO_TARGET_DIR=/cargo-cache/target" \
+          "${{ inputs.docker-image }}" \
+          sh -c '
+            set -eu
+            if echo "$RUST_TARGET" | grep -q -- "-musl$"; then
+              apk add --no-cache build-base perl linux-headers pkgconfig binutils
+              rustflags_var="CARGO_TARGET_$(echo "$RUST_TARGET" | tr "a-z-" "A-Z_")_RUSTFLAGS"
+              env -u RUSTFLAGS "$rustflags_var=-C target-feature=-crt-static" \
+                cargo rustc --release --manifest-path /workspace/src/typst_core/Cargo.toml --target "$RUST_TARGET" --crate-type cdylib
+              out="/cargo-cache/target/$RUST_TARGET/release/libtypst_core.so"
+              readelf -d "$out" | grep NEEDED || true
+              if readelf -d "$out" | grep -q "libc\.so\.6"; then
+                echo "Error: musl binary unexpectedly links against glibc (libc.so.6)" >&2
+                exit 1
+              fi
+              if ! readelf -d "$out" | grep -q "libc\.musl-"; then
+                echo "Error: musl binary does not dynamically link against musl libc" >&2
+                exit 1
+              fi
+            else
+              dnf install -y perl-core
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | \
+                CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup sh -s -- -y --default-toolchain "$RUST_VERSION" --profile minimal --no-modify-path
+              export PATH="/opt/cargo/bin:$PATH"
+              export RUSTUP_HOME=/opt/rustup
+              cargo rustc --release --manifest-path /workspace/src/typst_core/Cargo.toml --target "$RUST_TARGET" --crate-type cdylib
+              out="/cargo-cache/target/$RUST_TARGET/release/libtypst_core.so"
+              readelf -d "$out" | grep NEEDED || true
+              max_glibc=$(readelf --version-info "$out" | grep -oE "GLIBC_[0-9]+\.[0-9]+" | sort -Vu | tail -n1 || true)
+              echo "Maximum required GLIBC symbol version: ${max_glibc:-none}"
+              if readelf --version-info "$out" | grep -oE "GLIBC_[0-9]+\.[0-9]+" | awk -F"[._]" "{ if (\$2 > 2 || (\$2 == 2 && \$3 > 28)) exit 1 }"; then
+                echo "GLIBC compatibility check passed (<= 2.28)"
+              else
+                echo "Error: binary requires GLIBC newer than 2.28 ($max_glibc)" >&2
+                exit 1
+              fi
+            fi
+            cp "$out" /workspace/native-out/libtypst_core.so
+            chown -R "$HOST_UID:$HOST_GID" /workspace/native-out /workspace/src/typstsharp/Bindings.g.cs /cargo-cache
+          '
+
+    - name: Pack typstsharp.runtime.${{ inputs.rid }} (container artifact)
+      if: inputs.docker-image != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.output-directory }}"
+        dotnet pack src/typstsharp.runtime/typstsharp.runtime.csproj \
+          -c Release \
+          -p:RuntimeRid=${{ inputs.rid }} \
+          -p:NativeLibraryPath="${{ github.workspace }}/native-out/libtypst_core.so" \
+          -p:Version=${{ inputs.package-version }} \
+          -o "${{ inputs.output-directory }}"
+
+    - name: Pack typstsharp.runtime.${{ inputs.rid }} (host build)
+      if: inputs.docker-image == ''
       shell: bash
       env:
         MSYS2_ARG_CONV_EXCL: "*"
@@ -67,6 +132,5 @@ runs:
         dotnet pack src/typstsharp.runtime/typstsharp.runtime.csproj \
           -c Release \
           -p:RuntimeRid=${{ inputs.rid }} \
-          -p:RequireMusl=true \
           -p:Version=${{ inputs.package-version }} \
           -o "${{ inputs.output-directory }}"

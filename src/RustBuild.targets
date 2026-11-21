@@ -4,12 +4,8 @@
     <HostRustRuntime Condition="'$(HostRustRuntime)' == '' and '$(NETCoreSdkPortableRuntimeIdentifier)' != ''">$(NETCoreSdkPortableRuntimeIdentifier)</HostRustRuntime>
     <HostRustRuntime Condition="'$(HostRustRuntime)' == '' and '$(NETCoreSdkRuntimeIdentifier)' != ''">$(NETCoreSdkRuntimeIdentifier)</HostRustRuntime>
     <HostRustRuntime Condition="'$(HostRustRuntime)' == ''">win-x64</HostRustRuntime>
-    <!-- Normalize musl host RIDs (e.g. Alpine dev environments) to the portable linux-* RIDs -->
-    <HostRustRuntime Condition="'$(HostRustRuntime)' == 'linux-musl-x64'">linux-x64</HostRustRuntime>
-    <HostRustRuntime Condition="'$(HostRustRuntime)' == 'linux-musl-arm64'">linux-arm64</HostRustRuntime>
 
     <SkipRustBuild Condition="'$(SkipRustBuild)' == ''">false</SkipRustBuild>
-    <RequireMusl Condition="'$(RequireMusl)' == ''">false</RequireMusl>
 
     <WindowsX64RustTargetTriple Condition="'$(WindowsX64RustTargetTriple)' == '' and '$(OS)' == 'Windows_NT'">x86_64-pc-windows-msvc</WindowsX64RustTargetTriple>
     <WindowsX64RustTargetTriple Condition="'$(WindowsX64RustTargetTriple)' == ''">x86_64-pc-windows-gnu</WindowsX64RustTargetTriple>
@@ -28,20 +24,22 @@
       <LibraryFileName>typst_core.dll</LibraryFileName>
     </RustRuntime>
     <RustRuntime Include="linux-x64">
-      <TargetTriple>x86_64-unknown-linux-musl</TargetTriple>
+      <TargetTriple>x86_64-unknown-linux-gnu</TargetTriple>
       <LibraryFileName>libtypst_core.so</LibraryFileName>
-      <MuslCompiler>x86_64-linux-musl-gcc</MuslCompiler>
-      <MuslCcEnv>CC_x86_64_unknown_linux_musl</MuslCcEnv>
-      <MuslLinkerEnv>CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER</MuslLinkerEnv>
-      <GnuFallbackTriple>x86_64-unknown-linux-gnu</GnuFallbackTriple>
     </RustRuntime>
     <RustRuntime Include="linux-arm64">
+      <TargetTriple>aarch64-unknown-linux-gnu</TargetTriple>
+      <LibraryFileName>libtypst_core.so</LibraryFileName>
+    </RustRuntime>
+    <RustRuntime Include="linux-musl-x64">
+      <TargetTriple>x86_64-unknown-linux-musl</TargetTriple>
+      <LibraryFileName>libtypst_core.so</LibraryFileName>
+      <MuslRustFlagsEnv>CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS</MuslRustFlagsEnv>
+    </RustRuntime>
+    <RustRuntime Include="linux-musl-arm64">
       <TargetTriple>aarch64-unknown-linux-musl</TargetTriple>
       <LibraryFileName>libtypst_core.so</LibraryFileName>
-      <MuslCompiler>aarch64-linux-musl-gcc</MuslCompiler>
-      <MuslCcEnv>CC_aarch64_unknown_linux_musl</MuslCcEnv>
-      <MuslLinkerEnv>CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER</MuslLinkerEnv>
-      <GnuFallbackTriple>aarch64-unknown-linux-gnu</GnuFallbackTriple>
+      <MuslRustFlagsEnv>CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS</MuslRustFlagsEnv>
     </RustRuntime>
     <RustRuntime Include="osx-arm64">
       <TargetTriple>aarch64-apple-darwin</TargetTriple>
@@ -62,42 +60,6 @@
   </ItemGroup>
 
   <Target Name="DetectRustToolchains" Condition="'$(OS)' == 'Unix' and '$(SkipRustBuild)' != 'true'">
-    <!-- Check x86_64-linux-musl-gcc only if linux-x64 is requested -->
-    <Exec Command="which x86_64-linux-musl-gcc" IgnoreExitCode="true" ConsoleToMSBuild="true" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';linux-x64;'))">
-      <Output TaskParameter="ExitCode" PropertyName="MuslX64ExitCode" />
-      <Output TaskParameter="ConsoleOutput" PropertyName="MuslX64Path" />
-    </Exec>
-    <PropertyGroup Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';linux-x64;'))">
-      <HasMuslX64>false</HasMuslX64>
-      <HasMuslX64 Condition="'$(MuslX64ExitCode)' == '0'">true</HasMuslX64>
-    </PropertyGroup>
-    <Message Text="x86_64-linux-musl-gcc detection: exit=$(MuslX64ExitCode), path='$(MuslX64Path)', HasMuslX64=$(HasMuslX64)" Importance="high" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';linux-x64;'))" />
-    <Error Text="x86_64-linux-musl-gcc is required when RequireMusl=true for linux-x64." Condition="'$(RequireMusl)' == 'true' and '$(HasMuslX64)' == 'false' and $([System.String]::Copy(';$(RustTargets);').Contains(';linux-x64;'))" />
-    <ItemGroup Condition="'$(HasMuslX64)' == 'false' and $([System.String]::Copy(';$(RustTargets);').Contains(';linux-x64;'))">
-      <RustRuntime Update="@(RustRuntime)" Condition="'%(Identity)' == 'linux-x64'">
-        <TargetTriple>x86_64-unknown-linux-gnu</TargetTriple>
-        <CargoOutput>$([System.IO.Path]::Combine('$(RustCoreDir)', 'target', 'x86_64-unknown-linux-gnu', 'release', 'libtypst_core.so'))</CargoOutput>
-      </RustRuntime>
-    </ItemGroup>
-
-    <!-- Check aarch64-linux-musl-gcc only if linux-arm64 is requested -->
-    <Exec Command="which aarch64-linux-musl-gcc" IgnoreExitCode="true" ConsoleToMSBuild="true" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';linux-arm64;'))">
-      <Output TaskParameter="ExitCode" PropertyName="MuslArm64ExitCode" />
-      <Output TaskParameter="ConsoleOutput" PropertyName="MuslArm64Path" />
-    </Exec>
-    <PropertyGroup Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';linux-arm64;'))">
-      <HasMuslArm64>false</HasMuslArm64>
-      <HasMuslArm64 Condition="'$(MuslArm64ExitCode)' == '0'">true</HasMuslArm64>
-    </PropertyGroup>
-    <Message Text="aarch64-linux-musl-gcc detection: exit=$(MuslArm64ExitCode), path='$(MuslArm64Path)', HasMuslArm64=$(HasMuslArm64)" Importance="high" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';linux-arm64;'))" />
-    <Error Text="aarch64-linux-musl-gcc is required when RequireMusl=true for linux-arm64." Condition="'$(RequireMusl)' == 'true' and '$(HasMuslArm64)' == 'false' and $([System.String]::Copy(';$(RustTargets);').Contains(';linux-arm64;'))" />
-    <ItemGroup Condition="'$(HasMuslArm64)' == 'false' and $([System.String]::Copy(';$(RustTargets);').Contains(';linux-arm64;'))">
-      <RustRuntime Update="@(RustRuntime)" Condition="'%(Identity)' == 'linux-arm64'">
-        <TargetTriple>aarch64-unknown-linux-gnu</TargetTriple>
-        <CargoOutput>$([System.IO.Path]::Combine('$(RustCoreDir)', 'target', 'aarch64-unknown-linux-gnu', 'release', 'libtypst_core.so'))</CargoOutput>
-      </RustRuntime>
-    </ItemGroup>
-
     <!-- Check mingw-w64 only if cross-compiling win-x64 on Unix -->
     <Exec Command="which x86_64-w64-mingw32-gcc" IgnoreExitCode="true" ConsoleToMSBuild="true" Condition="$([System.String]::Copy(';$(RustTargets);').Contains(';win-x64;'))">
       <Output TaskParameter="ExitCode" PropertyName="MingwExitCode" />
@@ -123,15 +85,12 @@
     <Message Text="Building typst_core for %(RustTargetsToBuild.Identity) (%(RustTargetsToBuild.TargetTriple))" Importance="high" Condition="@(RustTargetsToBuild) != ''" />
     <Exec Command="rustup target add %(RustTargetsToBuild.TargetTriple)" Condition="@(RustTargetsToBuild) != ''" />
 
-    <!-- Linux musl targets: build staticlib and link a self-contained shared library with musl statically embedded -->
-    <Exec Command="%(RustTargetsToBuild.MuslCcEnv)=%(RustTargetsToBuild.MuslCompiler) %(RustTargetsToBuild.MuslLinkerEnv)=%(RustTargetsToBuild.MuslCompiler) cargo rustc --release --manifest-path &quot;$(RustCoreDir)/Cargo.toml&quot; --target %(RustTargetsToBuild.TargetTriple) --crate-type staticlib"
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          Condition="@(RustTargetsToBuild) != '' and $([System.String]::Copy('%(RustTargetsToBuild.TargetTriple)').EndsWith('-musl'))" />
-    <Exec Command="%(RustTargetsToBuild.MuslCompiler) -shared -o &quot;$(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.so.tmp.$$&quot; -Wl,--version-script=&quot;$(RustCoreDir)/exports.map&quot; -Wl,--whole-archive &quot;$(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.a&quot; -Wl,--no-whole-archive -Wl,-s -static-libgcc -Wl,-Bstatic -lc -Wl,-z,noexecstack &amp;&amp; mv -f &quot;$(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.so.tmp.$$&quot; &quot;$(RustCoreDir)/target/%(RustTargetsToBuild.TargetTriple)/release/libtypst_core.so&quot;"
+    <!-- Linux musl targets: build a standard dynamically-linked musl cdylib (-crt-static) -->
+    <Exec Command="env -u RUSTFLAGS %(RustTargetsToBuild.MuslRustFlagsEnv)=&quot;-C target-feature=-crt-static&quot; cargo rustc --release --manifest-path &quot;$(RustCoreDir)/Cargo.toml&quot; --target %(RustTargetsToBuild.TargetTriple) --crate-type cdylib"
           WorkingDirectory="$(MSBuildProjectDirectory)"
           Condition="@(RustTargetsToBuild) != '' and $([System.String]::Copy('%(RustTargetsToBuild.TargetTriple)').EndsWith('-musl'))" />
 
-    <!-- All other targets (Windows MSVC/GNU, macOS, Linux GNU fallback): build cdylib directly -->
+    <!-- All other targets (Windows MSVC/GNU, Linux glibc, macOS): build cdylib directly -->
     <Exec Command="cargo rustc --release --manifest-path &quot;$(RustCoreDir)/Cargo.toml&quot; --target %(RustTargetsToBuild.TargetTriple) --crate-type cdylib"
           WorkingDirectory="$(MSBuildProjectDirectory)"
           Condition="@(RustTargetsToBuild) != '' and !$([System.String]::Copy('%(RustTargetsToBuild.TargetTriple)').EndsWith('-musl'))" />
