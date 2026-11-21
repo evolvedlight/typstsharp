@@ -82,7 +82,7 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.91.1
+          toolchain: stable
           target: x86_64-unknown-linux-gnu
           cache-workspaces: src/typst_core
           rust-src-dir: src/typst_core
@@ -125,11 +125,11 @@ jobs:
           - rid: linux-musl-x64
             os: ubuntu-latest
             rust_target: x86_64-unknown-linux-musl
-            docker_image: rust:1.91.1-alpine
+            docker_image: rust:alpine
           - rid: linux-musl-arm64
             os: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-musl
-            docker_image: rust:1.91.1-alpine
+            docker_image: rust:alpine
           - rid: osx-arm64
             os: macos-latest
             rust_target: aarch64-apple-darwin

@@ -15,7 +15,7 @@ inputs:
     default: 11.x
   rust-version:
     description: Rust toolchain version to install
-    default: 1.91.1
+    default: stable
   output-directory:
     description: Output directory for packed artifacts
     default: artifacts
@@ -41,7 +41,7 @@ runs:
 
     - name: Cache Cargo artifacts (container)
       if: inputs.docker-image != ''
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: |
           ${{ runner.temp }}/cargo-cache/cargo/registry/index
