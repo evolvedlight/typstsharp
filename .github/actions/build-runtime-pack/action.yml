@@ -1,0 +1,72 @@
+name: Build typstsharp runtime package
+description: Builds typst_core and packs the per-RID typstsharp.runtime.<rid> NuGet package
+inputs:
+  rid:
+    description: Target .NET Runtime Identifier (e.g. win-x64, win-arm64, linux-x64, linux-arm64, osx-arm64)
+    required: true
+  rust-target:
+    description: Rust target triple (e.g. x86_64-pc-windows-msvc, aarch64-unknown-linux-musl)
+    required: true
+  package-version:
+    description: NuGet package version
+    required: true
+  dotnet-version:
+    description: .NET SDK version to install
+    default: 11.x
+  rust-version:
+    description: Rust toolchain version to install
+    default: 1.91.1
+  output-directory:
+    description: Output directory for packed artifacts
+    default: artifacts
+  musl-compiler:
+    description: Optional musl-gcc wrapper name to symlink on Linux (e.g. x86_64-linux-musl-gcc, aarch64-linux-musl-gcc)
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Install .NET SDK
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+
+    - name: Install Linux build prerequisites
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential \
+          pkg-config \
+          libssl-dev \
+          llvm \
+          clang \
+          zlib1g-dev \
+          ca-certificates \
+          musl-tools
+        if [ -n "${{ inputs.musl-compiler }}" ] && [ ! -e "/usr/local/bin/${{ inputs.musl-compiler }}" ]; then
+          sudo ln -s "$(which musl-gcc)" "/usr/local/bin/${{ inputs.musl-compiler }}"
+        fi
+
+    - name: Install Rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: ${{ inputs.rust-version }}
+        target: ${{ inputs.rust-target }}
+        cache-workspaces: src/typst_core
+        rust-src-dir: src/typst_core
+
+    - name: Pack typstsharp.runtime.${{ inputs.rid }}
+      shell: bash
+      env:
+        MSYS2_ARG_CONV_EXCL: "*"
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.output-directory }}"
+        dotnet pack src/typstsharp.runtime/typstsharp.runtime.csproj \
+          -c Release \
+          -p:RuntimeRid=${{ inputs.rid }} \
+          -p:RequireMusl=true \
+          -p:Version=${{ inputs.package-version }} \
+          -o "${{ inputs.output-directory }}"

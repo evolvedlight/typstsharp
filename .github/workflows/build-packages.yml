@@ -1,0 +1,152 @@
+name: build-packages
+
+on:
+  workflow_call:
+    inputs:
+      package_version:
+        description: NuGet package version for typstsharp and all runtime packages
+        required: true
+        type: string
+      run_tests:
+        description: Whether to run Rust native tests and local solution tests
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  pack-managed:
+    name: Pack typstsharp (managed)
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 11.x
+
+      - name: Pack typstsharp
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          dotnet pack src/typstsharp/typstsharp.csproj \
+            -c Release \
+            -p:SkipRustBuild=true \
+            -p:Version=${{ inputs.package_version }} \
+            -o artifacts
+
+      - name: Upload managed package
+        uses: actions/upload-artifact@v7
+        with:
+          name: typstsharp-managed-${{ inputs.package_version }}
+          path: artifacts/*.nupkg
+
+  pack-runtime:
+    name: Pack typstsharp.runtime.${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    env:
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+          - rid: win-arm64
+            os: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+          - rid: linux-x64
+            os: ubuntu-latest
+            rust_target: x86_64-unknown-linux-musl
+            musl_compiler: x86_64-linux-musl-gcc
+            run_unit_tests: true
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-musl
+            musl_compiler: aarch64-linux-musl-gcc
+          - rid: osx-arm64
+            os: macos-latest
+            rust_target: aarch64-apple-darwin
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Build and pack runtime package
+        uses: ./.github/actions/build-runtime-pack
+        with:
+          rid: ${{ matrix.rid }}
+          rust-target: ${{ matrix.rust_target }}
+          musl-compiler: ${{ matrix.musl_compiler }}
+          package-version: ${{ inputs.package_version }}
+
+      # The Rust tests cover the FFI entry points directly. That is the only place a
+      # panic crossing the boundary shows up as a failing test rather than as a
+      # crashed test runner, so they have to run in their own right.
+      - name: Run native tests
+        if: inputs.run_tests && matrix.run_unit_tests
+        shell: bash
+        run: cargo test --manifest-path src/typst_core/Cargo.toml --release
+
+      - name: Run solution tests
+        if: inputs.run_tests && matrix.run_unit_tests
+        shell: bash
+        run: dotnet test --solution typstsharp.slnx
+
+      - name: Upload runtime package
+        uses: actions/upload-artifact@v7
+        with:
+          name: typstsharp-runtime-${{ matrix.rid }}-${{ inputs.package_version }}
+          path: artifacts/*.nupkg
+
+  assemble-packages:
+    name: Assemble NuGet packages
+    needs:
+      - pack-managed
+      - pack-runtime
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all built packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: typstsharp-*-${{ inputs.package_version }}
+          path: artifacts
+          merge-multiple: true
+
+      - name: Verify expected packages exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lh artifacts
+          expected=(
+            "typstsharp.${{ inputs.package_version }}.nupkg"
+            "typstsharp.runtime.win-x64.${{ inputs.package_version }}.nupkg"
+            "typstsharp.runtime.win-arm64.${{ inputs.package_version }}.nupkg"
+            "typstsharp.runtime.linux-x64.${{ inputs.package_version }}.nupkg"
+            "typstsharp.runtime.linux-arm64.${{ inputs.package_version }}.nupkg"
+            "typstsharp.runtime.osx-arm64.${{ inputs.package_version }}.nupkg"
+          )
+          for pkg in "${expected[@]}"; do
+            if [ ! -f "artifacts/$pkg" ]; then
+              echo "Missing expected package: artifacts/$pkg" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload combined NuGet artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: typstsharp-${{ inputs.package_version }}
+          path: artifacts
