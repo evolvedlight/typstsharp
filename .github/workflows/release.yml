@@ -6,23 +6,18 @@ on:
       - published
 
 permissions:
-  contents: write
-  packages: write
-  id-token: write  # enable GitHub OIDC token issuance for this job
+  contents: read
 
 jobs:
-  publish:
+  version:
     runs-on: ubuntu-latest
-    env:
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
-      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    outputs:
+      package_version: ${{ steps.version.outputs.package_version }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
       - name: Determine package version
         id: version
+        shell: bash
         run: |
           set -euo pipefail
           tag_name="${GITHUB_REF#refs/tags/}"
@@ -31,25 +26,62 @@ jobs:
           fi
           package_version=${tag_name##v}
           echo "Using package version: $package_version"
-          echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
           echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
 
-      - name: Build package
-        uses: ./.github/actions/build-pack
-        with:
-          package-version: ${{ env.PACKAGE_VERSION }}
+  build:
+    needs: version
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      package_version: ${{ needs.version.outputs.package_version }}
+      run_tests: false
 
-       # Get a short-lived NuGet API key
-      - name: NuGet login (OIDC → temp API key)
+  publish:
+    needs:
+      - version
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write  # enable GitHub OIDC token issuance for this job
+    env:
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+    steps:
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 11.x
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: typstsharp-${{ needs.version.outputs.package_version }}
+          path: artifacts
+
+      # Get a short-lived NuGet API key
+      - name: NuGet login (OIDC -> temp API key)
         uses: NuGet/login@v1
         id: login
         with:
           user: evolvedlight
 
-      - name: Publish package to NuGet.org
+      - name: Publish runtime packages to NuGet.org
+        shell: bash
         run: |
-          dotnet nuget push artifacts/*.nupkg \
-            --api-key ${{steps.login.outputs.NUGET_API_KEY}} \
+          set -euo pipefail
+          dotnet nuget push artifacts/typstsharp.runtime.*.nupkg \
+            --api-key ${{ steps.login.outputs.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Publish main package to NuGet.org
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet nuget push "artifacts/typstsharp.${{ needs.version.outputs.package_version }}.nupkg" \
+            --api-key ${{ steps.login.outputs.NUGET_API_KEY }} \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 

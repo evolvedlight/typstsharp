@@ -11,13 +11,10 @@ permissions:
   contents: read
 
 jobs:
-  pack:
+  version:
     runs-on: ubuntu-latest
     outputs:
       package_version: ${{ steps.version.outputs.version }}
-    env:
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
-      DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
     steps:
       - name: Checkout repository
@@ -28,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base_version=$(grep -m1 '<Version>' src/typstsharp/typstsharp.csproj | sed -E 's/.*<Version>(.+)<\/Version>.*/\1/')
+          base_version=$(grep -m1 '<Version>' src/PackageMetadata.props | sed -E 's/.*<Version>(.+)<\/Version>.*/\1/')
           branch="${GITHUB_REF_NAME:-}"
           if [ -z "$branch" ] && [ -n "${GITHUB_HEAD_REF:-}" ]; then
             branch="$GITHUB_HEAD_REF"
@@ -41,57 +38,53 @@ jobs:
           echo "Base version: $base_version"
           echo "Branch: ${branch:-unknown}"
           echo "Using package version: $package_version"
-          echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
           echo "version=$package_version" >> "$GITHUB_OUTPUT"
 
-      - name: Build package
-        uses: ./.github/actions/build-pack
-        with:
-          package-version: ${{ env.PACKAGE_VERSION }}
-
-      # The Rust tests cover the FFI entry points directly. That is the only place a
-      # panic crossing the boundary shows up as a failing test rather than as a
-      # crashed test runner, so they have to run in their own right.
-      - name: Run native tests
-        shell: bash
-        run: cargo test --manifest-path src/typst_core/Cargo.toml --release
-
-      - name: Run tests
-        shell: bash
-        run: dotnet test --solution typstsharp.slnx
-
-      - name: Upload NuGet artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: typstsharp-${{ env.PACKAGE_VERSION }}
-          path: artifacts
+  build:
+    needs: version
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      package_version: ${{ needs.version.outputs.package_version }}
+      run_tests: true
 
   test-package:
-    needs: pack
+    name: Test package (${{ matrix.name }})
+    needs:
+      - version
+      - build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Windows
+          - name: Windows x64
             os: windows-latest
-          - name: Ubuntu
+          - name: Windows ARM64
+            os: windows-11-arm
+          - name: Ubuntu x64
             os: ubuntu-latest
-          - name: Alpine (musl)
+          - name: Ubuntu ARM64
+            os: ubuntu-24.04-arm
+          - name: macOS ARM64
+            os: macos-latest
+          - name: Alpine x64 (musl)
             os: ubuntu-latest
             test_type: docker-alpine
-          - name: Fedora (new glibc)
+          - name: Alpine ARM64 (musl)
+            os: ubuntu-24.04-arm
+            test_type: docker-alpine
+          - name: Fedora x64 (new glibc)
             os: ubuntu-latest
             test_type: docker-fedora
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Download package artifacts
         uses: actions/download-artifact@v7
         with:
-          name: typstsharp-${{ needs.pack.outputs.package_version }}
+          name: typstsharp-${{ needs.version.outputs.package_version }}
           path: artifacts
 
       - name: Install .NET SDK
@@ -100,26 +93,28 @@ jobs:
         with:
           dotnet-version: 11.x
 
-      - name: Run tests (Windows / Ubuntu)
+      - name: Run tests (native host)
         if: matrix.test_type == ''
         shell: bash
         env:
           MSYS2_ARG_CONV_EXCL: "*"
         run: |
+          set -euo pipefail
           dotnet nuget add source "${{ github.workspace }}/artifacts" --name local-artifacts
           dotnet nuget locals all --clear
-          dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
-          dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+          dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.version.outputs.package_version }}
+          dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.version.outputs.package_version }} --no-restore
 
       - name: Run tests (Alpine musl)
         if: matrix.test_type == 'docker-alpine'
         shell: bash
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace mcr.microsoft.com/dotnet/sdk:11.0-alpine sh -c "
+            set -eu
             dotnet nuget add source /workspace/artifacts --name local-artifacts
             dotnet nuget locals all --clear
-            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
-            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.version.outputs.package_version }}
+            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.version.outputs.package_version }} --no-restore
           "
 
       - name: Run tests (Fedora)
@@ -127,11 +122,12 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace fedora:40 sh -c "
+            set -eu
             dnf install -y curl tar icu
             curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 11.0 --install-dir /usr/share/dotnet
             ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet
             dotnet nuget add source /workspace/artifacts --name local-artifacts
             dotnet nuget locals all --clear
-            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }}
-            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.pack.outputs.package_version }} --no-restore
+            dotnet restore src/typstsharp.tests/typstsharp.tests.csproj -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.version.outputs.package_version }}
+            dotnet test --project src/typstsharp.tests/typstsharp.tests.csproj -c Release -p:UsePackagedLibrary=true -p:PackageVersion=${{ needs.version.outputs.package_version }} --no-restore
           "

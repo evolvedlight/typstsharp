@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\PackageMetadata.props" />
+  <Import Project="..\RustBuild.targets" />
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoBuild>true</NoBuild>
+
+    <RuntimeRid Condition="'$(RuntimeRid)' == ''">$(HostRustRuntime)</RuntimeRid>
+    <RustTargets>$(RuntimeRid)</RustTargets>
+    <SkipRustBuild Condition="'$(NativeLibraryPath)' != ''">true</SkipRustBuild>
+
+    <PackageId>typstsharp.runtime.$(RuntimeRid)</PackageId>
+    <Description>Native Typst library (typst_core) for $(RuntimeRid), used by typstsharp.</Description>
+
+    <NuspecFile>typstsharp.runtime.nuspec</NuspecFile>
+    <NuspecBasePath>$(MSBuildThisFileDirectory)</NuspecBasePath>
+  </PropertyGroup>
+
+  <Target Name="ValidateRuntimeRid" BeforeTargets="DetectRustToolchains;PrepareRuntimeNuspec">
+    <ItemGroup>
+      <_MatchedRuntime Include="@(RustRuntime)" Condition="'%(Identity)' == '$(RuntimeRid)'" />
+    </ItemGroup>
+    <Error Text="Unsupported RuntimeRid '$(RuntimeRid)'. Supported values: @(RustRuntime->'%(Identity)', ', ')." Condition="@(_MatchedRuntime) == ''" />
+  </Target>
+
+  <Target Name="PrepareRuntimeNuspec" BeforeTargets="_GetOutputItemsFromPack;GenerateNuspec" DependsOnTargets="ValidateRuntimeRid;BuildRust">
+    <ItemGroup>
+      <_SelectedRuntime Include="@(RustRuntime)" Condition="'%(Identity)' == '$(RuntimeRid)'" />
+    </ItemGroup>
+
+    <PropertyGroup>
+      <_ResolvedLibraryFileName>%(_SelectedRuntime.LibraryFileName)</_ResolvedLibraryFileName>
+      <_ResolvedNativeLibraryPath Condition="'$(NativeLibraryPath)' != ''">$([System.IO.Path]::GetFullPath('$(NativeLibraryPath)'))</_ResolvedNativeLibraryPath>
+      <_ResolvedNativeLibraryPath Condition="'$(_ResolvedNativeLibraryPath)' == ''">%(_SelectedRuntime.CargoOutput)</_ResolvedNativeLibraryPath>
+      <_NuspecTags>$([System.String]::Copy('$(PackageTags)').Replace(';', ' '))</_NuspecTags>
+      <NuspecProperties>id=$(PackageId);version=$(PackageVersion);authors=$(Authors);description=$(Description);tags=$(_NuspecTags);repositoryUrl=$(RepositoryUrl);license=$(PackageLicenseExpression);rid=$(RuntimeRid);libraryFileName=$(_ResolvedLibraryFileName);nativeLibraryPath=$(_ResolvedNativeLibraryPath)</NuspecProperties>
+    </PropertyGroup>
+
+    <Error Text="Native library not found at '$(_ResolvedNativeLibraryPath)' for RuntimeRid '$(RuntimeRid)'." Condition="!Exists('$(_ResolvedNativeLibraryPath)')" />
+  </Target>
+
+</Project>

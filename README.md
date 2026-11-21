@@ -248,15 +248,26 @@ typstsharp: the next compilation of each template starts cold. Call it after lar
 than after every compilation. It is safe to call while other threads compile. They lose cached
 results and compute them again, and documents already compiled stay valid.
 
-The packaged Linux library is statically linked against musl, whose allocator reuses freed memory for
-later compilations but rarely hands it back to the operating system, so the resident size stops growing
-rather than shrinking. Clearing the cache does not lower the peak of a single compilation either: to
-bound that, split a large document into several smaller ones and clear the cache between them.
+On Alpine / musl (`linux-musl-*`), musl's allocator reuses freed memory for later compilations but rarely hands it back to the operating system, so the resident size stops growing rather than shrinking. Clearing the cache does not lower the peak of a single compilation either: to bound that, split a large document into several smaller ones and clear the cache between them.
+
+## Supported Platforms & NuGet Packages
+
+`typstsharp` ships as a small managed package that depends on per-architecture native runtime packages (similar to `SkiaSharp`):
+
+- `typstsharp.runtime.win-x64`
+- `typstsharp.runtime.win-arm64`
+- `typstsharp.runtime.linux-x64` (glibc 2.28+ — Ubuntu, Debian, Fedora, RHEL, Amazon Linux, etc.)
+- `typstsharp.runtime.linux-arm64` (glibc 2.28+ — Ubuntu ARM64, Debian ARM64, AWS Graviton, etc.)
+- `typstsharp.runtime.linux-musl-x64` (Alpine Linux / musl)
+- `typstsharp.runtime.linux-musl-arm64` (Alpine Linux ARM64 / musl)
+- `typstsharp.runtime.osx-arm64`
+
+You only need to install the main `typstsharp` package. Portable builds (`dotnet run`, `dotnet test`, file-based apps) pick up your host platform's native binary automatically, and RID-specific publishes (`dotnet publish -r <rid>`) automatically include only the native library for that target runtime.
 
 ## Prerequisites
 
 - [.NET SDK 11.0](https://dotnet.microsoft.com/) – required to build the managed projects.
-- [Rust toolchain](https://www.rust-lang.org/tools/install) (with `cargo`) – **only required if you are building the project from source.** The NuGet package includes pre-compiled native binaries.
+- [Rust toolchain](https://www.rust-lang.org/tools/install) (with `cargo`) – **only required if you are building the project from source.** The NuGet packages include pre-compiled native binaries.
 
 ## Building
 
@@ -267,15 +278,17 @@ bound that, split a large document into several smaller ones and clear the cache
 
 The build will automatically:
 
-1. Run `cargo build --release` on `src/typst_core` for each target runtime identifier (RID). By default, this includes `win-x64`, `linux-x64`, and others. For local debug builds, it only builds for the host architecture. Note that the build will automatically fallback to `gnu` from `musl` on Linux if `musl-gcc` is not available on the system.
-2. Stage the produced native libraries under `obj/`.
-3. Add the libraries to the managed project's runtime assets so that `dotnet publish`/`dotnet pack` place the files under `runtimes/<rid>/native/` in the final artifact.
-4. For local development, the native binary for the host architecture is copied to the output directory of any project referencing `typstsharp`, ensuring it's available for debugging.
+1. Run `cargo rustc --release --crate-type cdylib` on `src/typst_core` for the host runtime identifier (RID).
+2. Copy the native binary for the host architecture to the output directory of any project referencing `typstsharp`, ensuring it is available for local runs and tests.
 
-You can override the target runtimes by setting the `RustTargets` property (e.g., `dotnet build -p:RustTargets=win-x64`). On macOS, use `osx-arm64` for Apple Silicon or `osx-x64` for Intel:
+You can override the target runtime by setting the `RustTargets` property (e.g., `dotnet build -p:RustTargets=osx-arm64`), or skip the Rust build when only compiling/packing the managed assembly (`-p:SkipRustBuild=true`):
 
 ```bash
-dotnet build -p:RustTargets=osx-arm64
+# Pack the managed package (depends on the per-RID runtime packages)
+dotnet pack src/typstsharp/typstsharp.csproj -c Release -p:SkipRustBuild=true -o artifacts
+
+# Pack a native runtime package for a specific RID (e.g. linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, win-x64, win-arm64, osx-arm64)
+dotnet pack src/typstsharp.runtime/typstsharp.runtime.csproj -c Release -p:RuntimeRid=osx-arm64 -o artifacts
 ```
 
 ## Verifying the CLI
