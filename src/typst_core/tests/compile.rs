@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 
 use typst_core::{
-    Compiler, compile, create_compiler, evict_cache, free_compile_result, free_compiler,
+    Compiler, compile, create_compiler, evict_cache, evict_cache_with_max_age,
+    free_compile_result, free_compiler, get_max_cache_age, set_max_cache_age, set_source,
 };
 
 /// Creates a compiler over an in-memory document. The source is handed over as
@@ -197,4 +198,37 @@ fn the_cache_can_be_cleared_while_other_threads_compile() {
     }
 
     assert!(evictions > 0, "no eviction overlapped the compilations");
+}
+
+#[test]
+fn max_cache_age_defaults_to_thirty_and_can_be_configured() {
+    let original = get_max_cache_age();
+    assert_eq!(original, 30);
+
+    set_max_cache_age(64);
+    assert_eq!(get_max_cache_age(), 64);
+    assert!(evict_cache_with_max_age(10));
+
+    set_max_cache_age(original);
+    assert_eq!(get_max_cache_age(), original);
+}
+
+#[test]
+fn set_source_replaces_in_memory_document_for_subsequent_compilations() {
+    let compiler = compiler_for(&reproducible("= First source"));
+    let first = compile_to_pdf(compiler);
+
+    let updated = reproducible("= Second source with much more content\n\n#lorem(100)");
+    assert!(unsafe { set_source(compiler, updated.as_ptr(), updated.len()) });
+    let second = compile_to_pdf(compiler);
+
+    assert_ne!(first, second, "updating the source did not change the rendered PDF");
+
+    // Setting back to the initial source produces the exact same bytes again.
+    let initial = reproducible("= First source");
+    assert!(unsafe { set_source(compiler, initial.as_ptr(), initial.len()) });
+    let third = compile_to_pdf(compiler);
+    assert_eq!(first, third);
+
+    unsafe { free_compiler(compiler) };
 }

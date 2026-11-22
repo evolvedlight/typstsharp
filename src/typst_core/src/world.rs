@@ -160,6 +160,15 @@ impl SystemWorld {
         Ok(())
     }
 
+    /// Replaces the in-memory source of the main file, updating the existing [`Source`] in place
+    /// so Typst can reuse its `FileId` and incrementally re-parse only the changed slice.
+    pub fn set_source(&mut self, content: &str) {
+        let main = self.main;
+        self.slot(main, |slot| {
+            slot.set_in_memory_source(content);
+        });
+    }
+
     /// Prepares the world for a new compilation.
     ///
     /// Drops the cached date/time and marks every file slot as not yet accessed, so
@@ -304,6 +313,16 @@ impl FileSlot {
         self.file.reset();
         self.probe = Probe::default();
     }
+
+    fn set_in_memory_source(&mut self, text: &str) {
+        let id = self.id;
+        self.source.update_in_memory(
+            |source| {
+                source.replace(text);
+            },
+            || Source::new(id, text.into()),
+        );
+    }
 }
 
 fn system_path(
@@ -350,6 +369,17 @@ impl<T: Clone> SlotCell<T> {
     /// back to.
     fn init_in_memory(&mut self, data: T) {
         self.data = Some(Ok(data));
+        self.accessed = true;
+        self.in_memory = true;
+    }
+
+    /// Updates the cell's in-memory value in place if one is already present, or initializes it
+    /// in memory otherwise.
+    fn update_in_memory(&mut self, update: impl FnOnce(&mut T), init: impl FnOnce() -> T) {
+        match &mut self.data {
+            Some(Ok(existing)) => update(existing),
+            _ => self.data = Some(Ok(init())),
+        }
         self.accessed = true;
         self.in_memory = true;
     }
