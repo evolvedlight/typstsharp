@@ -885,6 +885,196 @@ public class Tests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task MaxCacheAgeDefaultsToThirtyAndCanBeConfigured()
+    {
+        int original = TypstCompiler.MaxCacheAge;
+        try
+        {
+            await Assert.That(original).IsEqualTo(30);
+
+            TypstCompiler.MaxCacheAge = 64;
+            await Assert.That(TypstCompiler.MaxCacheAge).IsEqualTo(64);
+
+            await Assert.That(() => TypstCompiler.MaxCacheAge = -1).Throws<ArgumentOutOfRangeException>();
+            await Assert.That(() => TypstCompiler.EvictCache(-1)).Throws<ArgumentOutOfRangeException>();
+
+            TypstCompiler.EvictCache(10);
+        }
+        finally
+        {
+            TypstCompiler.MaxCacheAge = original;
+        }
+    }
+
+    [Test]
+    public async Task SetSourceUpdatesInMemoryDocumentIncrementally()
+    {
+        using var compiler = TypstCompiler.FromSource("= Initial Heading");
+        await Assert.That(GetPlainText(compiler.CompilePdf())).Contains("Initial Heading");
+
+        compiler.SetSource("= Updated Heading\n\nWith extra body text.");
+        var updatedText = GetPlainText(compiler.CompilePdf());
+        await Assert.That(updatedText).Contains("Updated Heading");
+        await Assert.That(updatedText).Contains("With extra body text.");
+
+        // Empty source is also valid
+        compiler.SetSource("");
+        using var emptyDoc = compiler.CompileToDocument();
+        await Assert.That(emptyDoc.GetOutputLength()).IsGreaterThan(0);
+    }
+
+    [Test]
+    public async Task SetSysInputsJsonSupportsStructuredObjectsArraysAndNumbers()
+    {
+        const string source = """
+            #let title = sys.inputs.title
+            #let tax = sys.inputs.tax
+            #let items = sys.inputs.items
+            = #title
+            #for item in items [
+              - #item.name: #(item.qty * item.price)
+            ]
+            Tax rate: #tax
+            """;
+
+        using var compiler = TypstCompiler.FromSource(source);
+        compiler.SetSysInputsJson("""
+            {
+              "title": "Invoice 1042",
+              "tax": 15,
+              "items": [
+                { "name": "Widget", "qty": 3, "price": 10 },
+                { "name": "Gadget", "qty": 2, "price": 25 }
+              ]
+            }
+            """);
+
+        var text = GetPlainText(compiler.CompilePdf());
+        await Assert.That(text).Contains("Invoice 1042");
+        await Assert.That(text).Contains("Widget: 30");
+        await Assert.That(text).Contains("Gadget: 50");
+        await Assert.That(text).Contains("Tax rate: 15");
+    }
+
+    [Test]
+    public async Task ConcurrentUseOfSingleCompilerThrowsInvalidOperationException()
+    {
+        // A document heavy enough that one compilation stays inside the native call long enough for
+        // a second thread to overlap it deterministically when both start at the barrier.
+        var heavySource = string.Join("\n\n#pagebreak()\n\n", Enumerable.Range(0, 40).Select(i => $"= Page {i}\n\n#lorem(250)"));
+        using var compiler = TypstCompiler.FromSource(heavySource);
+        using var barrier = new Barrier(2);
+
+        var tasks = Enumerable.Range(0, 2).Select(_ => Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            using var doc = compiler.CompileToDocument();
+        })).ToArray();
+
+        InvalidOperationException? caught = null;
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch (InvalidOperationException ex)
+        {
+            caught = ex;
+        }
+
+        // If the machine was fast enough on the first try that they didn't overlap, try a tight loop.
+        if (caught is null)
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var t1 = Task.Run(() =>
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    try
+                    {
+                        using var doc = compiler.CompileToDocument();
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        caught = ex;
+                        cts.Cancel();
+                    }
+                }
+            });
+            var t2 = Task.Run(() =>
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    try
+                    {
+                        compiler.SetSource(heavySource);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        caught = ex;
+                        cts.Cancel();
+                    }
+                }
+            });
+            await Task.WhenAll(t1, t2);
+        }
+
+        await Assert.That(caught).IsNotNull();
+        await Assert.That(caught!.Message).Contains("TypstCompiler is not thread-safe");
+    }
+
+    [Test]
+    public async Task TypstCompilerPoolHandlesHighConcurrencySafely()
+    {
+        const string template = """
+            #let (customer, order_id) = sys.inputs
+            = Order #order_id for #customer
+            #lorem(50)
+            """;
+
+        using var pool = TypstCompilerPool.FromSource(template, maxConcurrency: 4);
+        await Assert.That(pool.MaxConcurrency).IsEqualTo(4);
+
+        var tasks = Enumerable.Range(0, 32).Select(async i =>
+        {
+            var inputs = new Dictionary<string, string>
+            {
+                ["customer"] = $"Customer-{i}",
+                ["order_id"] = $"{1000 + i}",
+            };
+
+            using var ms = new MemoryStream();
+            await pool.CompilePdfAsync(ms, inputs);
+            var text = GetPlainText(ms.ToArray());
+            return (i, text);
+        }).ToArray();
+
+        var results = await Task.WhenAll(tasks);
+        foreach (var (i, text) in results)
+        {
+            await Assert.That(text).Contains($"Order {1000 + i} for Customer-{i}");
+        }
+    }
+
+    [Test]
+    public async Task TypstCompilerPoolSupportsDynamicSourceAndJsonInputs()
+    {
+        using var pool = TypstCompilerPool.FromSource(maxConcurrency: 2);
+
+        using (var doc = await pool.CompileSourceToDocumentAsync("= Dynamic Source 1"))
+        {
+            await Assert.That(GetPlainText(doc.GetOutputBytes())).Contains("Dynamic Source 1");
+        }
+
+        using var jsonPool = TypstCompilerPool.FromSource("#sys.inputs.nested.greeting (#sys.inputs.nested.count)", maxConcurrency: 2);
+        using (var doc = await jsonPool.CompileToDocumentWithJsonInputsAsync("""{"nested": {"greeting": "Grüezi", "count": 42}}"""))
+        {
+            var text = GetPlainText(doc.GetOutputBytes());
+            await Assert.That(text).Contains("Grüezi (42)");
+        }
+    }
+
+    [Test]
     public async Task DocumentStaysReadableAfterTheCacheIsCleared()
     {
         using var compiler = TypstCompiler.FromSource("= Held across an eviction");

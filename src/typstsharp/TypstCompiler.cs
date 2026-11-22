@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace typstsharp;
 
@@ -26,7 +27,8 @@ public class TypstCompiler : IDisposable
 {
     public static string EmptyDictionaryJson => "{}";
     private unsafe CsBindgen.Compiler* _compiler;
-    private bool _disposed = false;
+    private int _disposed;
+    private int _inUse;
     private static readonly JsonSerializerOptions sourceGenOptions = new()
     {
         TypeInfoResolver = SourceGenerationContext.Default
@@ -296,6 +298,34 @@ public class TypstCompiler : IDisposable
     }
 
     /// <summary>
+    /// Gets or sets the maximum age (in compilations across the process) that entries in Typst's
+    /// process-global incremental compilation cache survive without being used. Defaults to 30.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// After each compilation, Typst ages the process-global cache by one generation and drops
+    /// entries that have not been hit within the last <see cref="MaxCacheAge"/> compilations.
+    /// Because the cache and its generation counter are shared across every <see cref="TypstCompiler"/>
+    /// and thread in the process, concurrent worker threads or multiple distinct templates advance
+    /// the counter together.
+    /// </para>
+    /// <para>
+    /// Increase this value on servers with high concurrency or many distinct templates so that
+    /// concurrent compilations do not prematurely evict each other's cached results. Lower it in
+    /// memory-constrained environments, or set it to <c>0</c> to disable retention across compilations.
+    /// </para>
+    /// </remarks>
+    public static int MaxCacheAge
+    {
+        get => checked((int)CsBindgen.NativeMethods.get_max_cache_age());
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            CsBindgen.NativeMethods.set_max_cache_age((nuint)value);
+        }
+    }
+
+    /// <summary>
     /// Clears Typst's incremental compilation cache, which every compiler in the process shares,
     /// and releases the memory it holds.
     /// </summary>
@@ -303,10 +333,11 @@ public class TypstCompiler : IDisposable
     /// <remarks>
     /// <para>
     /// The cache is what makes recompiling a template fast. Every compilation trims it on the way
-    /// out, keeping whatever was used by one of the last ten compilations. How much it holds grows
-    /// with the size of the documents compiled, so an unusually large document, such as one of a
-    /// few thousand pages, can hold on to gigabytes of native memory until ten more compilations have
-    /// passed. Call this right after such a compilation to release that memory at once.
+    /// out, keeping whatever was used within the last <see cref="MaxCacheAge"/> compilations (30 by
+    /// default). How much it holds grows with the size of the documents compiled, so an unusually
+    /// large document, such as one of a few thousand pages, can hold on to gigabytes of native
+    /// memory until <see cref="MaxCacheAge"/> more compilations have passed. Call this right after
+    /// such a compilation to release that memory at once.
     /// </para>
     /// <para>
     /// The next compilation does the work it did the first time, for every compiler in the process,
@@ -319,9 +350,22 @@ public class TypstCompiler : IDisposable
     /// their memory and stay valid.
     /// </para>
     /// </remarks>
-    public static void EvictCache()
+    public static void EvictCache() => EvictCache(0);
+
+    /// <summary>
+    /// Trims Typst's process-global incremental compilation cache, dropping every cached result
+    /// that has not been used within the last <paramref name="maxAge"/> compilations.
+    /// </summary>
+    /// <param name="maxAge">
+    /// The maximum number of compilations an unused cache entry may survive. Pass <c>0</c> to
+    /// clear the cache completely.
+    /// </param>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown if <paramref name="maxAge"/> is negative.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the native eviction failed.</exception>
+    public static void EvictCache(int maxAge)
     {
-        if (!CsBindgen.NativeMethods.evict_cache())
+        ArgumentOutOfRangeException.ThrowIfNegative(maxAge);
+        if (!CsBindgen.NativeMethods.evict_cache_with_max_age((nuint)maxAge))
         {
             throw new InvalidOperationException("Typst failed to evict its compilation cache.");
         }
@@ -459,52 +503,59 @@ public class TypstCompiler : IDisposable
     /// </remarks>
     public unsafe TypstDocument CompileToDocument(string format = "pdf", float ppi = 144.0f, IEnumerable<string>? pdfStandards = null, float mergedGap = 0f)
     {
-        EnsureNotDisposed();
-        if (!float.IsFinite(mergedGap) || mergedGap < 0f)
-        {
-            throw new ArgumentOutOfRangeException(nameof(mergedGap), mergedGap, "The gap between merged SVG pages must be a finite, non-negative number of points.");
-        }
-
-        IntPtr formatPtr = Marshal.StringToCoTaskMemUTF8(format);
-        string standardsStr = pdfStandards != null ? string.Join(",", pdfStandards) : "";
-        IntPtr standardsPtr = Marshal.StringToCoTaskMemUTF8(standardsStr);
-
+        EnterExclusiveUse();
         try
         {
-            var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, mergedGap, (byte*)standardsPtr);
+            if (!float.IsFinite(mergedGap) || mergedGap < 0f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(mergedGap), mergedGap, "The gap between merged SVG pages must be a finite, non-negative number of points.");
+            }
 
-            // The P/Invoke is a preemptive-mode transition, so a collection can run while Typst is
-            // compiling. `this` is dead from the field load above onwards, so without this the
-            // finalizer could free the native world underneath the call that is still using it.
-            GC.KeepAlive(this);
+            IntPtr formatPtr = Marshal.StringToCoTaskMemUTF8(format);
+            string standardsStr = pdfStandards != null ? string.Join(",", pdfStandards) : "";
+            IntPtr standardsPtr = Marshal.StringToCoTaskMemUTF8(standardsStr);
 
             try
             {
-                if (native.error_ptr != null)
-                {
-                    var error = System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(native.error_ptr, checked((int)native.error_len)));
-                    throw new InvalidOperationException(error);
-                }
+                var native = CsBindgen.NativeMethods.compile(_compiler, (byte*)formatPtr, ppi, mergedGap, (byte*)standardsPtr);
 
-                // From here on the document owns the native result and frees it when disposed.
-                return new TypstDocument(native);
-            }
-            catch
-            {
-                CsBindgen.NativeMethods.free_compile_result(native);
-                throw;
+                // The P/Invoke is a preemptive-mode transition, so a collection can run while Typst is
+                // compiling. `this` is dead from the field load above onwards, so without this the
+                // finalizer could free the native world underneath the call that is still using it.
+                GC.KeepAlive(this);
+
+                try
+                {
+                    if (native.error_ptr != null)
+                    {
+                        var error = System.Text.Encoding.UTF8.GetString(new ReadOnlySpan<byte>(native.error_ptr, checked((int)native.error_len)));
+                        throw new InvalidOperationException(error);
+                    }
+
+                    // From here on the document owns the native result and frees it when disposed.
+                    return new TypstDocument(native);
+                }
+                catch
+                {
+                    CsBindgen.NativeMethods.free_compile_result(native);
+                    throw;
+                }
+                finally
+                {
+                    // Trims the incremental compilation cache to what the last MaxCacheAge compilations
+                    // used; EvictCache releases more. Independent of who owns the buffers.
+                    CsBindgen.NativeMethods.reset_world();
+                }
             }
             finally
             {
-                // Trims the incremental compilation cache to what the last ten compilations used;
-                // EvictCache releases more. Independent of who owns the buffers.
-                CsBindgen.NativeMethods.reset_world();
+                if (formatPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(formatPtr);
+                if (standardsPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(standardsPtr);
             }
         }
         finally
         {
-            if (formatPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(formatPtr);
-            if (standardsPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(standardsPtr);
+            ExitExclusiveUse();
         }
     }
 
@@ -704,29 +755,113 @@ public class TypstCompiler : IDisposable
     }
 
     /// <summary>
-    /// Sets the system inputs for the Typst compiler, which are accessible within the Typst script via `sys.inputs`.
+    /// Replaces the in-memory Typst source of the main document, updating its syntax tree in place
+    /// so Typst preserves its file identity and incrementally re-parses only the changed range.
     /// </summary>
-    /// <param name="inputs">A dictionary of key-value pairs. Values are serialized to JSON and passed to the compiler.</param>
-    /// <exception cref="Exception">Thrown if the inputs fail to be set in the native compiler.</exception>
-    public unsafe void SetSysInputs(IDictionary<string, string> inputs)
+    /// <param name="source">The new Typst source code.</param>
+    /// <exception cref="ArgumentNullException">Thrown if <paramref name="source"/> is null.</exception>
+    /// <exception cref="ObjectDisposedException">Thrown if the compiler has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the compiler is already in use on another thread or if updating the source fails.</exception>
+    public unsafe void SetSource(string source)
     {
-        if (_disposed) throw new ObjectDisposedException(nameof(TypstCompiler));
-
-        var sysInputsJson = JsonSerializer.Serialize<IDictionary<string, string>>(inputs, sourceGenOptions);
-        var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(sysInputsJson);
+        ArgumentNullException.ThrowIfNull(source);
+        EnterExclusiveUse();
         try
         {
-            var ok = CsBindgen.NativeMethods.set_sys_inputs(_compiler, (byte*)sysInputsPtr);
-            GC.KeepAlive(this);
-
-            if (!ok)
+            int byteCount = Encoding.UTF8.GetByteCount(source);
+            IntPtr sourcePtr = Marshal.AllocCoTaskMem(byteCount == 0 ? 1 : byteCount);
+            try
             {
-                throw new Exception("Failed to set system inputs");
+                int written = 0;
+                if (byteCount > 0)
+                {
+                    fixed (char* chars = source)
+                    {
+                        written = Encoding.UTF8.GetBytes(chars, source.Length, (byte*)sourcePtr, byteCount);
+                    }
+                }
+
+                var ok = CsBindgen.NativeMethods.set_source(_compiler, (byte*)sourcePtr, (nuint)written);
+                GC.KeepAlive(this);
+
+                if (!ok)
+                {
+                    throw new InvalidOperationException("Failed to set Typst source.");
+                }
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(sourcePtr);
             }
         }
         finally
         {
-            Marshal.FreeCoTaskMem(sysInputsPtr);
+            ExitExclusiveUse();
+        }
+    }
+
+    /// <summary>
+    /// Sets the system inputs for the Typst compiler, which are accessible within the Typst script via `sys.inputs`.
+    /// </summary>
+    /// <param name="inputs">A dictionary of key-value pairs. Values are serialized to JSON and passed to the compiler.</param>
+    /// <exception cref="Exception">Thrown if the inputs fail to be set in the native compiler.</exception>
+    public void SetSysInputs(IDictionary<string, string> inputs)
+    {
+        ArgumentNullException.ThrowIfNull(inputs);
+        var sysInputsJson = JsonSerializer.Serialize<IDictionary<string, string>>(inputs, sourceGenOptions);
+        SetSysInputsJson(sysInputsJson);
+    }
+
+    /// <summary>
+    /// Serializes <paramref name="inputs"/> as a JSON object using the provided source-generated
+    /// <see cref="JsonTypeInfo{T}"/> and sets it as `sys.inputs` in the Typst compiler.
+    /// Nested objects, arrays, numbers, booleans, and strings become native Typst dictionaries,
+    /// arrays, numbers, booleans, and strings in `sys.inputs`.
+    /// </summary>
+    /// <typeparam name="T">The type of the inputs object (must serialize to a JSON object).</typeparam>
+    /// <param name="inputs">The value to serialize as a JSON object.</param>
+    /// <param name="jsonTypeInfo">The source-generated <see cref="JsonTypeInfo{T}"/> metadata.</param>
+    public void SetSysInputs<T>(T inputs, JsonTypeInfo<T> jsonTypeInfo)
+    {
+        ArgumentNullException.ThrowIfNull(inputs);
+        ArgumentNullException.ThrowIfNull(jsonTypeInfo);
+        var sysInputsJson = JsonSerializer.Serialize(inputs, jsonTypeInfo);
+        SetSysInputsJson(sysInputsJson);
+    }
+
+    /// <summary>
+    /// Sets `sys.inputs` in the Typst compiler from a raw JSON object string (e.g. <c>{"items": [1, 2, 3]}</c>).
+    /// Nested JSON objects, arrays, numbers, booleans, and strings are deserialized directly into
+    /// native Typst dictionaries, arrays, numbers, booleans, and strings in `sys.inputs`.
+    /// </summary>
+    /// <param name="json">A JSON object string.</param>
+    /// <exception cref="ArgumentNullException">Thrown if <paramref name="json"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if <paramref name="json"/> is not a valid JSON object or the compiler is in use on another thread.</exception>
+    public unsafe void SetSysInputsJson(string json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        EnterExclusiveUse();
+        try
+        {
+            var sysInputsPtr = Marshal.StringToCoTaskMemUTF8(json);
+            try
+            {
+                var ok = CsBindgen.NativeMethods.set_sys_inputs(_compiler, (byte*)sysInputsPtr);
+                GC.KeepAlive(this);
+
+                if (!ok)
+                {
+                    throw new InvalidOperationException("Failed to set system inputs. Ensure the input is a valid JSON object.");
+                }
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(sysInputsPtr);
+            }
+        }
+        finally
+        {
+            ExitExclusiveUse();
         }
     }
 
@@ -739,8 +874,26 @@ public class TypstCompiler : IDisposable
 
     protected virtual unsafe void Dispose(bool disposing)
     {
-        if (_disposed)
+        if (Volatile.Read(ref _disposed) != 0)
         {
+            return;
+        }
+
+        if (disposing)
+        {
+            if (Interlocked.CompareExchange(ref _inUse, 1, 0) != 0)
+            {
+                throw new InvalidOperationException(
+                    "Cannot dispose TypstCompiler while a compilation or operation is in progress on another thread.");
+            }
+        }
+
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            if (disposing)
+            {
+                ExitExclusiveUse();
+            }
             return;
         }
 
@@ -750,7 +903,10 @@ public class TypstCompiler : IDisposable
             _compiler = null;
         }
 
-        _disposed = true;
+        if (disposing)
+        {
+            ExitExclusiveUse();
+        }
     }
 
     ~TypstCompiler()
@@ -758,12 +914,27 @@ public class TypstCompiler : IDisposable
         Dispose(false);
     }
 
-    private void EnsureNotDisposed()
+    private void EnterExclusiveUse()
     {
-        if (_disposed)
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+        if (Interlocked.CompareExchange(ref _inUse, 1, 0) != 0)
         {
+            throw new InvalidOperationException(
+                "TypstCompiler is not thread-safe and is already in use on another thread. " +
+                "Use TypstCompilerPool for concurrent compilations, or synchronize access to this instance.");
+        }
+
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            ExitExclusiveUse();
             throw new ObjectDisposedException(nameof(TypstCompiler));
         }
+    }
+
+    private void ExitExclusiveUse()
+    {
+        Volatile.Write(ref _inUse, 0);
     }
 }
 

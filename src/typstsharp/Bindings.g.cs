@@ -60,6 +60,22 @@ namespace CsBindgen
         internal static extern bool set_sys_inputs(Compiler* compiler, byte* sys_inputs);
 
         /// <summary>
+        ///  Replaces the in-memory source of the compiler's main document, updating the existing [`Source`]
+        ///  in place so Typst preserves its `FileId` and incrementally re-parses only the changed range.
+        ///
+        ///  Returns `false` if `compiler` is null or if `source` is null while `source_len` is non-zero.
+        ///
+        ///  # Safety
+        ///
+        ///  `compiler` must be null or a live pointer from [`create_compiler`] that no other thread is
+        ///  using, and `source` must point to `source_len` readable bytes for the duration of the call
+        ///  (or be null when `source_len` is `0`).
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "set_source", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool set_source(Compiler* compiler, byte* source, nuint source_len);
+
+        /// <summary>
         ///  Compiles the document to `format`, which is one of `pdf`, `png`, `svg` or `svg-merged`.
         ///
         ///  `pdf` and `svg-merged` produce a single buffer for the whole document; `png` and `svg` produce
@@ -98,21 +114,38 @@ namespace CsBindgen
 
         /// <summary>
         ///  Trims the process-global incremental compilation cache, dropping every result that has not been
-        ///  used in the last ten trims. The managed side calls this after each compilation. The cache holds
-        ///  no references to any [`CompileResult`], so trimming it never invalidates output the caller is
-        ///  still holding.
+        ///  used in the last `max_cache_age` trims (30 by default). The managed side calls this after each
+        ///  compilation. The cache holds no references to any [`CompileResult`], so trimming it never
+        ///  invalidates output the caller is still holding.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "reset_world", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void reset_world();
 
         /// <summary>
+        ///  Configures the maximum age (in compilations across the process) that entries in the
+        ///  process-global incremental compilation cache survive without being hit.
+        ///
+        ///  Increase this on servers with high concurrency or many distinct templates so that concurrent
+        ///  compilations do not prematurely evict each other's cached results. Lower it in memory-constrained
+        ///  environments.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "set_max_cache_age", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void set_max_cache_age(nuint max_age);
+
+        /// <summary>
+        ///  Returns the currently configured maximum cache age (in compilations across the process).
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "get_max_cache_age", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern nuint get_max_cache_age();
+
+        /// <summary>
         ///  Clears the process-global incremental compilation cache completely.
         ///
         ///  The cache is what makes recompiling a template fast, and what it holds grows with the size of
-        ///  the documents compiled. Because [`reset_world`] keeps results for ten compilations, memory taken
-        ///  by an unusually large document stays allocated until ten more compilations have passed. A
-        ///  document of a few thousand pages can hold on to gigabytes that way. Calling this right after such
-        ///  a compilation releases it at once.
+        ///  the documents compiled. Because [`reset_world`] keeps results for [`get_max_cache_age`]
+        ///  compilations (30 by default), memory taken by an unusually large document stays allocated until
+        ///  that many compilations have passed. A document of a few thousand pages can hold on to gigabytes
+        ///  that way. Calling this right after such a compilation releases it at once.
         ///
         ///  The cache is shared by every compiler in the process, so the next compilation of every compiler
         ///  starts cold. Evicting is safe while other threads are compiling: they lose cached results and
@@ -125,6 +158,17 @@ namespace CsBindgen
         [DllImport(__DllName, EntryPoint = "evict_cache", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         [return: MarshalAs(UnmanagedType.U1)]
         internal static extern bool evict_cache();
+
+        /// <summary>
+        ///  Trims the process-global incremental compilation cache to entries used within the last
+        ///  `max_age` compilations.
+        ///
+        ///  Pass `0` to clear the cache completely (equivalent to [`evict_cache`]). Returns `false` if the
+        ///  eviction panicked.
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "evict_cache_with_max_age", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool evict_cache_with_max_age(nuint max_age);
 
 
     }

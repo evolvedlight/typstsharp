@@ -21,6 +21,7 @@
 use std::ffi::{CStr, c_char};
 use std::path::PathBuf;
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod compiler;
 mod download;
@@ -233,6 +234,39 @@ pub unsafe extern "C" fn set_sys_inputs(compiler: *mut Compiler, sys_inputs: *co
         Ok(_) => true,
         Err(_) => false,
     }
+}
+
+/// Replaces the in-memory source of the compiler's main document, updating the existing [`Source`]
+/// in place so Typst preserves its `FileId` and incrementally re-parses only the changed range.
+///
+/// Returns `false` if `compiler` is null or if `source` is null while `source_len` is non-zero.
+///
+/// # Safety
+///
+/// `compiler` must be null or a live pointer from [`create_compiler`] that no other thread is
+/// using, and `source` must point to `source_len` readable bytes for the duration of the call
+/// (or be null when `source_len` is `0`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn set_source(
+    compiler: *mut Compiler,
+    source: *const u8,
+    source_len: usize,
+) -> bool {
+    if compiler.is_null() {
+        return false;
+    }
+    if source.is_null() && source_len > 0 {
+        return false;
+    }
+    let compiler = unsafe { &mut *compiler };
+    let content = if source_len == 0 {
+        std::borrow::Cow::Borrowed("")
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(source, source_len) };
+        String::from_utf8_lossy(bytes)
+    };
+    compiler.0.set_source(&content);
+    true
 }
 
 fn compile_inner(
@@ -513,26 +547,51 @@ pub unsafe extern "C" fn free_compile_result(result: CompileResult) {
     }
 }
 
-/// How many evictions a cached result survives without being used, when the cache is trimmed after
-/// a compilation. With one eviction per compilation, results stay cached for ten compilations.
-const DEFAULT_MAX_CACHE_AGE: usize = 10;
+/// Default number of evictions a cached result survives without being used, when the cache is
+/// trimmed after a compilation.
+///
+/// The process-global `comemo` cache is shared across every compiler and thread in the process,
+/// and `reset_world` ages the entire cache by one generation after each compilation. A higher
+/// default (30, matching `typst-cli`'s steady-state threshold rather than 10) prevents concurrent
+/// worker threads or multiple templates in a web server from prematurely evicting each other's
+/// memoised layout and evaluation results.
+const DEFAULT_MAX_CACHE_AGE: usize = 30;
+
+static MAX_CACHE_AGE: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_CACHE_AGE);
 
 /// Trims the process-global incremental compilation cache, dropping every result that has not been
-/// used in the last ten trims. The managed side calls this after each compilation. The cache holds
-/// no references to any [`CompileResult`], so trimming it never invalidates output the caller is
-/// still holding.
+/// used in the last `max_cache_age` trims (30 by default). The managed side calls this after each
+/// compilation. The cache holds no references to any [`CompileResult`], so trimming it never
+/// invalidates output the caller is still holding.
 #[unsafe(no_mangle)]
 pub extern "C" fn reset_world() {
-    comemo::evict(DEFAULT_MAX_CACHE_AGE);
+    comemo::evict(MAX_CACHE_AGE.load(Ordering::Relaxed));
+}
+
+/// Configures the maximum age (in compilations across the process) that entries in the
+/// process-global incremental compilation cache survive without being hit.
+///
+/// Increase this on servers with high concurrency or many distinct templates so that concurrent
+/// compilations do not prematurely evict each other's cached results. Lower it in memory-constrained
+/// environments.
+#[unsafe(no_mangle)]
+pub extern "C" fn set_max_cache_age(max_age: usize) {
+    MAX_CACHE_AGE.store(max_age, Ordering::Relaxed);
+}
+
+/// Returns the currently configured maximum cache age (in compilations across the process).
+#[unsafe(no_mangle)]
+pub extern "C" fn get_max_cache_age() -> usize {
+    MAX_CACHE_AGE.load(Ordering::Relaxed)
 }
 
 /// Clears the process-global incremental compilation cache completely.
 ///
 /// The cache is what makes recompiling a template fast, and what it holds grows with the size of
-/// the documents compiled. Because [`reset_world`] keeps results for ten compilations, memory taken
-/// by an unusually large document stays allocated until ten more compilations have passed. A
-/// document of a few thousand pages can hold on to gigabytes that way. Calling this right after such
-/// a compilation releases it at once.
+/// the documents compiled. Because [`reset_world`] keeps results for [`get_max_cache_age`]
+/// compilations (30 by default), memory taken by an unusually large document stays allocated until
+/// that many compilations have passed. A document of a few thousand pages can hold on to gigabytes
+/// that way. Calling this right after such a compilation releases it at once.
 ///
 /// The cache is shared by every compiler in the process, so the next compilation of every compiler
 /// starts cold. Evicting is safe while other threads are compiling: they lose cached results and
@@ -544,6 +603,16 @@ pub extern "C" fn reset_world() {
 #[unsafe(no_mangle)]
 pub extern "C" fn evict_cache() -> bool {
     std::panic::catch_unwind(|| comemo::evict(0)).is_ok()
+}
+
+/// Trims the process-global incremental compilation cache to entries used within the last
+/// `max_age` compilations.
+///
+/// Pass `0` to clear the cache completely (equivalent to [`evict_cache`]). Returns `false` if the
+/// eviction panicked.
+#[unsafe(no_mangle)]
+pub extern "C" fn evict_cache_with_max_age(max_age: usize) -> bool {
+    std::panic::catch_unwind(|| comemo::evict(max_age)).is_ok()
 }
 
 #[cfg(test)]

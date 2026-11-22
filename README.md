@@ -210,7 +210,41 @@ var compiler = TypstCompiler.FromFile(
 This is what an application that ships its packages alongside its binaries wants, and it keeps
 builds reproducible: whatever is deployed is exactly what gets compiled.
 
-You can easily use this inside of an ASP.Net Server (just ensure you lazy load and cache the TypstCompiler to reduce from 40ms to around 3ms for a normal compile).
+### High-Concurrency & ASP.NET Core Usage
+
+A single `TypstCompiler` instance is **not thread-safe** (calling it from two threads simultaneously throws `InvalidOperationException`). However:
+
+- **Font discovery and loaded fonts** are automatically cached process-wide per `Fonts` configuration (scanning system fonts takes ~40–70ms on the first compiler created in the process and ~0ms thereafter).
+- **Incremental layout and evaluation** are memoised in a process-wide cache (`TypstCompiler.MaxCacheAge`, defaulting to 30 compilations).
+- **Parsed template syntax trees and file timestamps** are cached per `TypstCompiler` instance.
+
+For ASP.NET Core and other multi-threaded servers, use **`TypstCompilerPool`** (registered as a singleton). It lazily pools up to `Environment.ProcessorCount` compiler instances, bounds concurrent native compilations so traffic spikes queue cleanly without starving the thread pool, sets `sys.inputs` (or updates source text via `SetSource`) atomically per request, and returns the compiler to the pool before you stream the zero-copy `TypstDocument` to the HTTP response:
+
+```csharp
+// Program.cs — register a singleton pool for a template
+builder.Services.AddSingleton(_ => TypstCompilerPool.FromFile(
+    "templates/invoice.typ",
+    root: builder.Environment.ContentRootPath,
+    packagePath: Path.Combine(AppContext.BaseDirectory, "TypstPackages"),
+    includeSystemPackages: false));
+
+// Endpoint — rent a compiler, render to native memory, and stream directly to Kestrel
+app.MapPost("/invoice", async (InvoiceRequest req, TypstCompilerPool pool, HttpContext http, CancellationToken ct) =>
+{
+    var inputs = new Dictionary<string, string>
+    {
+        ["customer"] = req.CustomerName,
+        ["total"] = req.Total.ToString("F2"),
+    };
+
+    using var document = await pool.CompileToDocumentAsync(inputs, cancellationToken: ct);
+    http.Response.ContentType = "application/pdf";
+    http.Response.ContentLength = document.GetOutputLength();
+    await document.CopyOutputToAsync(http.Response.Body, cancellationToken: ct);
+});
+```
+
+You can also pass structured JSON objects (including nested objects, arrays, numbers, and booleans) directly into `sys.inputs` via `compiler.SetSysInputsJson(json)`, `compiler.SetSysInputs(dto, jsonTypeInfo)`, or `pool.CompileToDocumentWithJsonInputsAsync(json)`, and dynamically update an in-memory compiler's source with incremental re-parsing via `compiler.SetSource(source)` or `pool.CompileSourceToDocumentAsync(source)`.
 
 A cached compiler stays current: every compilation checks the template, its imports and its data
 files on disk, so redeploying a template takes effect without restarting the process. The check
@@ -226,10 +260,15 @@ an ordinary write is safe even on file systems with coarse timestamps.
 
 Typst memoises its work in an incremental compilation cache, which is what makes a second compile of
 the same template fast. The cache is shared by every compiler in the process, and after each
-compilation it is trimmed to what one of the last ten compilations used. What it holds grows with
-the size of the documents, so a process that occasionally compiles a document of a few thousand
-pages keeps memory in proportion to it for the next ten compilations. Under a memory limit, a
-handful of large documents in a row can be enough to exceed it.
+compilation it is trimmed to what one of the last `TypstCompiler.MaxCacheAge` compilations (30 by
+default) used. On a server with high concurrency or many distinct templates, you can increase
+`TypstCompiler.MaxCacheAge` (e.g. `64` or `128`) so concurrent compilations do not prematurely
+evict each other's cached results, or lower it in memory-constrained environments.
+
+What the cache holds grows with the size of the documents, so a process that occasionally compiles a
+document of a few thousand pages keeps memory in proportion to it until `MaxCacheAge` more
+compilations have passed. Under a memory limit, a handful of large documents in a row can be enough
+to exceed it.
 
 Clear the cache after an unusually large compilation to release that memory at once:
 
